@@ -1,0 +1,76 @@
+# Empaquetado de Lumi: .dmg para Mac y instalador .exe (NSIS) para Windows.
+appId: com.axelcervantes.lumi
+productName: Lumi
+copyright: © 2026 Axel Cervantes
+directories:
+  buildResources: build
+  output: dist
+files:
+  - out/**
+  - package.json
+  - "!**/*.map"
+  - "!**/node_modules/onnxruntime-node/**"
+  - "!**/node_modules/onnxruntime-web/**"
+  - "!**/node_modules/@huggingface/**"
+  - "!**/node_modules/sharp/**"
+  - "!**/node_modules/@img/**"
+extraResources:
+  - from: resources
+    to: .
+    filter: ["*.png"]
+# La extensión de vectores y el motor SQLite son nativos: van fuera del .asar
+asarUnpack:
+  - "**/node_modules/sqlite-vec*/**"
+  - "**/node_modules/better-sqlite3/**"
+npmRebuild: false
+
+mac:
+  category: public.app-category.productivity
+  icon: build/icon.icns
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+    - target: zip
+      arch: [arm64, x64]
+  extendInfo:
+    LSUIElement: true
+  # Sin certificado de Apple se firma "ad-hoc" (-): la app corre en tu Mac sin problemas.
+  # Con un certificado Developer ID (ver README → Firma), el flujo de GitHub cambia
+  # identity y activa hardenedRuntime + notarize.
+  identity: "-"
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  hardenedRuntime: false
+  gatekeeperAssess: false
+  notarize: false
+dmg:
+  title: Lumi ${version}
+  artifactName: Lumi-${version}-${arch}.dmg
+
+win:
+  icon: build/icon.ico
+  target:
+    - target: nsis
+      arch: [x64]
+  artifactName: Lumi-${version}-Instalador.${ext}
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Lumi
+  installerLanguages: [es_ES]
+  language: "3082"
+
+linux:
+  executableName: lumi
+  target: [AppImage]
+  category: Office
+
+# Auto-actualización desde GitHub Releases. Cambia owner/repo por el tuyo.
+publish:
+  provider: github
+  owner: TU_USUARIO_DE_GITHUB
+  repo: lumi
+  releaseType: draft

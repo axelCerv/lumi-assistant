@@ -1,0 +1,13 @@
+node_modules/
+out/
+dist/
+*.log
+.DS_Store
+Thumbs.db
+.env
+.vscode/
+.idea/
+*.tsbuildinfo
+
+# Instaladores generados (pesan más de 100 MB; no van a GitHub)
+instaladores/

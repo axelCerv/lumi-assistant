@@ -1,0 +1,23 @@
+{
+  "name": "lumi",
+  "private": true,
+  "version": "0.3.0",
+  "description": "Lumi, tu asistente flotante con cerebro local en Obsidian",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "app": "npm run dev -w @lumi/desktop",
+    "dev": "npm run dev -w @lumi/desktop",
+    "build": "npm run build -w @lumi/desktop",
+    "typecheck": "npm run typecheck -w @lumi/shared && npm run typecheck -w @lumi/desktop",
+    "test": "npm run test -w @lumi/desktop",
+    "instalador": "npm run dist -w @lumi/desktop",
+    "instalador:mac": "npm run dist:mac -w @lumi/desktop",
+    "instalador:win": "npm run dist:win -w @lumi/desktop"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

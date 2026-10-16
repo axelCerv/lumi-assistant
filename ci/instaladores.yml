@@ -1,0 +1,84 @@
+# Genera los instaladores de Lumi: .dmg para Mac (Apple Silicon e Intel) y .exe para Windows.
+#
+# Muévelo a .github/workflows/instaladores.yml antes de subir el repositorio:
+#   mkdir -p .github/workflows && mv ci/instaladores.yml .github/workflows/
+#
+# - Manual: GitHub → Actions → "Instaladores" → Run workflow. Descarga los
+#   instaladores desde "Artifacts" al terminar.
+# - Con versión: sube una etiqueta (git tag v0.2.0 && git push --tags) y se crea
+#   un Release en borrador con los instaladores; la app se actualiza sola desde ahí.
+#
+# Secretos opcionales (Settings → Secrets → Actions):
+#   MAIN_VITE_GOOGLE_CLIENT_ID, MAIN_VITE_GOOGLE_CLIENT_SECRET, MAIN_VITE_MICROSOFT_CLIENT_ID
+#   CSC_LINK, CSC_KEY_PASSWORD                (certificado para firmar)
+#   APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID   (notarizar en Mac)
+name: Instaladores
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            name: mac
+            args: --mac
+          - os: windows-latest
+            name: windows
+            args: --win
+    runs-on: ${{ matrix.os }}
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      MAIN_VITE_GOOGLE_CLIENT_ID: ${{ secrets.MAIN_VITE_GOOGLE_CLIENT_ID }}
+      MAIN_VITE_GOOGLE_CLIENT_SECRET: ${{ secrets.MAIN_VITE_GOOGLE_CLIENT_SECRET }}
+      MAIN_VITE_MICROSOFT_CLIENT_ID: ${{ secrets.MAIN_VITE_MICROSOFT_CLIENT_ID }}
+      CSC_LINK: ${{ secrets.CSC_LINK }}
+      CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+      CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.CSC_LINK != '' }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package.json
+
+      # Sin lockfile: npm instala los binarios correctos para cada sistema (bug npm/cli#4828)
+      - run: rm -f package-lock.json && npm install --no-audit --no-fund
+
+      # La extensión de vectores para Intel (el runner es Apple Silicon)
+      - if: matrix.name == 'mac'
+        run: npm install --no-save --force sqlite-vec-darwin-x64@0.1.9
+
+      - run: npm run typecheck
+      - run: npm test
+
+      - name: Construir
+        working-directory: apps/desktop
+        run: >
+          npx electron-vite build &&
+          npx electron-builder ${{ matrix.args }}
+          --publish ${{ github.ref_type == 'tag' && 'always' || 'never' }}
+          -c.publish.owner=${{ github.repository_owner }}
+          -c.publish.repo=${{ github.event.repository.name }}
+          ${{ matrix.name == 'mac' && secrets.CSC_LINK != '' && '-c.mac.identity="Developer ID Application" -c.mac.hardenedRuntime=true' || '' }}
+          ${{ matrix.name == 'mac' && secrets.APPLE_ID != '' && '-c.mac.notarize=true' || '' }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lumi-${{ matrix.name }}
+          path: |
+            apps/desktop/dist/*.dmg
+            apps/desktop/dist/*.exe
+          if-no-files-found: error

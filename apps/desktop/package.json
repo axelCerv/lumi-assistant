@@ -1,0 +1,51 @@
+{
+  "name": "@lumi/desktop",
+  "productName": "Lumi",
+  "version": "0.3.0",
+  "description": "Lumi, tu asistente flotante con cerebro local en Obsidian",
+  "author": "Axel Cervantes",
+  "private": true,
+  "main": "./out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev --watch",
+    "build": "electron-vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "test": "vitest run",
+    "dist": "electron-vite build && electron-builder",
+    "dist:mac": "electron-vite build && electron-builder --mac",
+    "dist:win": "electron-vite build && electron-builder --win"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.133.0",
+    "@google/genai": "^2.29.0",
+    "@modelcontextprotocol/sdk": "^1.32.0",
+    "better-sqlite3": "^13.0.3",
+    "chokidar": "^5.0.0",
+    "electron-updater": "^6.6.0",
+    "gray-matter": "^4.0.3",
+    "ical.js": "^2.2.1",
+    "picomatch": "^4.0.2",
+    "sqlite-vec": "^0.1.9",
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "@fontsource-variable/bricolage-grotesque": "^5.3.0",
+    "@fontsource-variable/figtree": "^5.3.0",
+    "@huggingface/transformers": "^4.3.0",
+    "@lumi/shared": "*",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.9.0",
+    "@types/picomatch": "^4.0.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "electron": "43.7.11",
+    "electron-builder": "^26.0.0",
+    "electron-vite": "^2.3.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11",
+    "vitest": "^2.1.9"
+  }
+}

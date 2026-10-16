@@ -1,0 +1,7 @@
+# Carpetas o archivos que Lumi NUNCA lee ni envía a la IA.
+# Una ruta por línea, relativa al vault. Se permiten comodines (*).
+# Ejemplos:
+# Personal/
+# Finanzas/*.md
+.obsidian/
+.trash/
