@@ -67,14 +67,19 @@ jobs:
 
       - name: Construir
         working-directory: apps/desktop
-        run: >
-          npx electron-vite build &&
-          npx electron-builder ${{ matrix.args }}
-          --publish ${{ github.ref_type == 'tag' && 'always' || 'never' }}
-          -c.publish.owner=${{ github.repository_owner }}
-          -c.publish.repo=${{ github.event.repository.name }}
-          ${{ matrix.name == 'mac' && secrets.CSC_LINK != '' && '-c.mac.identity="Developer ID Application" -c.mac.hardenedRuntime=true' || '' }}
-          ${{ matrix.name == 'mac' && secrets.APPLE_ID != '' && '-c.mac.notarize=true' || '' }}
+        run: |
+          # Un secreto que no existe llega como texto vacío, y electron-builder toma
+          # CSC_LINK="" como una ruta («not a file»). Sin certificado, se quitan.
+          for v in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+            if [ -z "${!v}" ]; then unset "$v"; fi
+          done
+          npx electron-vite build
+          npx electron-builder ${{ matrix.args }} \
+            --publish ${{ github.ref_type == 'tag' && 'always' || 'never' }} \
+            -c.publish.owner=${{ github.repository_owner }} \
+            -c.publish.repo=${{ github.event.repository.name }} \
+            ${{ matrix.name == 'mac' && secrets.CSC_LINK != '' && '-c.mac.identity="Developer ID Application" -c.mac.hardenedRuntime=true' || '' }} \
+            ${{ matrix.name == 'mac' && secrets.APPLE_ID != '' && '-c.mac.notarize=true' || '' }}
 
       - uses: actions/upload-artifact@v4
         with:
