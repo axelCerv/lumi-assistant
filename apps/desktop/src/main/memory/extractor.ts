@@ -56,6 +56,27 @@ export function classifyDraft(draft: TaskDraft, mode: Mode | null, brain: Brain 
   return out;
 }
 
+/**
+ * Un proyecto siempre es de un cliente: si la nota solo nombra el proyecto,
+ * se agrega su cliente (y si nombra varios, se queda uno de cada uno).
+ */
+export function withProjectClient(tags: Tag[], brain: Brain | null): Tag[] {
+  const ents = brain?.entities() ?? [];
+  let client = tags.find((t) => t.kind === "cliente") ?? null;
+  const projects = tags.filter((t) => t.kind === "proyecto");
+  // Si hay cliente, se prefiere un proyecto de ese cliente
+  const project =
+    projects.find((p) => {
+      const e = ents.find((x) => x.kind === "proyecto" && x.slug === slugify(p.name));
+      return !client || !e?.client || slugify(e.client) === slugify(client.name);
+    }) ?? null;
+  if (project && !client) {
+    const owner = ents.find((x) => x.kind === "proyecto" && x.slug === slugify(project.name))?.client;
+    if (owner) client = { kind: "cliente", name: owner };
+  }
+  return [client, project].filter((t): t is Tag => !!t);
+}
+
 export function localDraft(text: string, brain: Brain | null): TaskDraft {
   const known: Tag[] = (brain?.entities() ?? []).filter((e) => e.kind !== "persona").map((e) => ({ name: e.name, kind: e.kind as Tag["kind"] }));
   const split = splitMode(text);
@@ -64,9 +85,10 @@ export function localDraft(text: string, brain: Brain | null): TaskDraft {
   return classifyDraft(
     {
       title: p.title,
-      date: d ? dayKey(d) : null,
+      date: d && !p.daily ? dayKey(d) : null,
       time: d ? fmtTime(d) : null,
-      tags: p.tags,
+      tags: withProjectClient(p.tags, brain),
+      daily: p.daily || undefined,
       contact: p.contact,
       original: text,
       reason: p.reason,
@@ -87,13 +109,19 @@ interface QuickJson {
   persona?: string | null;
   categoria?: string | null;
   materia?: string | null;
+  diario?: boolean | null;
 }
 
 export async function refineDraft(text: string, brain: Brain | null): Promise<TaskDraft | null> {
   const provider = activeProvider();
   if (!provider) return null;
   const ents = brain?.entities() ?? [];
-  const list = (k: string) => ents.filter((e) => e.kind === k).map((e) => e.name).slice(0, 120).join(", ") || "(ninguno)";
+  const list = (k: string) =>
+    ents
+      .filter((e) => e.kind === k)
+      .map((e) => (e.kind === "proyecto" && e.client ? `${e.name} (de ${e.client})` : e.name))
+      .slice(0, 150)
+      .join(", ") || "(ninguno)";
   const mem = (brain?.facts() ?? []).slice(-60).map((f) => `- ${f.text}`).join("\n") || "(vacía)";
   const split = splitMode(text);
   const mode = targetMode(split.mode);
@@ -109,11 +137,13 @@ ${subjects.length ? `- Materias: ${subjects.join(", ")} (usa el nombre tal cual)
 - "#Nombre" es la ${subjects.length ? "materia o " : ""}categoría y "@Nombre" es una persona.`
     : `- "@Nombre" es cliente y "#Nombre" es proyecto. Usa los nombres conocidos tal cual si la nota o la memoria los relacionan.`;
   const system = `Conviertes notas rápidas en español en pendientes estructurados. Devuelve SOLO un objeto JSON:
-{"titulo": "acción corta que empieza con verbo en infinitivo, sin fecha ni hora", "fecha": "AAAA-MM-DD" o null, "hora": "HH:MM" o null, ${fields}, "persona": "nombre" o null}
+{"titulo": "acción corta que empieza con verbo en infinitivo, sin fecha ni hora", "fecha": "AAAA-MM-DD" o null, "hora": "HH:MM" o null, ${fields}, "persona": "nombre" o null, "diario": true o false}
 
 - Ahora es ${nowLine()} (hora local).
 - Interpreta "hoy", "mañana", "el jueves", "antes de comer" (13:00), "en la tarde" (16:00), "al final del día" (18:00), "en 30 min".
 - Si no hay fecha ni hora, propone hoy en ~1 hora (o mañana 09:00 si ya es noche).
+- "diario": true solo si pide que se lo recuerdes todos los días / cada día / hasta que lo haga. Entonces "fecha" es null (salvo que diga desde cuándo) y "hora" solo si la dice.
+- Un proyecto siempre es de un cliente: si eliges un proyecto conocido, pon también su cliente.
 ${classRules}
 - Clientes conocidos: ${list("cliente")}
 - Proyectos conocidos: ${list("proyecto")}
@@ -125,14 +155,16 @@ ${mem}`;
     const j = parseJsonLoose<QuickJson>(r.text);
     if (!j?.titulo) return null;
     const tags: Tag[] = [];
-    if (j.cliente) tags.push({ kind: "cliente", name: j.cliente });
-    if (j.proyecto) tags.push({ kind: "proyecto", name: j.proyecto });
+    if (j.cliente) tags.push({ kind: "cliente", name: ents.find((e) => e.kind === "cliente" && e.slug === slugify(j.cliente!))?.name ?? j.cliente });
+    if (j.proyecto) tags.push({ kind: "proyecto", name: ents.find((e) => e.kind === "proyecto" && e.slug === slugify(j.proyecto!))?.name ?? j.proyecto });
+    const daily = j.diario === true;
     const subject = j.materia?.trim() ? (subjects.find((x) => slugify(x) === slugify(j.materia!)) ?? null) : null;
     const draft: TaskDraft = {
       title: j.titulo.trim(),
       date: j.fecha && /^\d{4}-\d{2}-\d{2}$/.test(j.fecha) ? j.fecha : null,
       time: j.hora && /^\d{1,2}:\d{2}$/.test(j.hora) ? j.hora.padStart(5, "0") : null,
-      tags,
+      tags: withProjectClient(tags, brain),
+      daily: daily || undefined,
       contact: j.persona?.trim() || null,
       original: text,
       reason: "leído con IA",

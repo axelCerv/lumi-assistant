@@ -1,4 +1,4 @@
-# Estado de Lumi (v0.3.0 · 14 de octubre de 2026)
+# Estado de Lumi (v0.3.1 · 21 de octubre de 2026)
 
 Comparación del roadmap del [plan maestro](plan-maestro.md) contra lo que está construido y verificado.
 
@@ -93,6 +93,21 @@ Todo se probó con pruebas automáticas (97 en total, 42 nuevas) y con la app co
 | Pregunta de edad en el onboarding y en Ajustes → Modos | ✅ |
 | «Lumi sin IA»: ningún proveedor se usa (ni chat, ni notas, ni Granola) y se saltan esos pasos | ✅ Probado de punta a punta. |
 
+## v0.3.1 — Burbuja que no se traba, recordatorios diarios y clientes desde tus carpetas
+| Tarea | Estado | Notas |
+|---|---|---|
+| La burbuja se recupera sola si su ventana se cae o se congela | ✅ | Probado tumbando la ventana a propósito: Lumi la rehace y el aviso sale con botones que responden. También se rehace al volver de la suspensión, al desbloquear y si se reinicia la GPU. |
+| Si la burbuja no aparece en 5 s, se rehace | ✅ | Vigilante por aviso. |
+| El tamaño de la burbuja se ajusta si cambia después de dibujarse | ✅ | Evita que los botones queden fuera de la ventana. En Windows, la parte nueva podía quedar transparente y los clics la atravesaban. |
+| Arrastre: si se pierde el «soltar», Lumi deja de seguir al mouse | ✅ | |
+| Notificación del sistema solo si no estás frente a la compu | ✅ | Pasa tras 2 min sin actividad o con la pantalla bloqueada. Así no tapa los botones de la burbuja. |
+| Bandeja: «¿Lumi se trabó? Reiniciar sus ventanas» y «Ver registro» | ✅ | Registro en `lumi.log`, dentro de la carpeta de datos de la app. |
+| Recordatorios «🔔 Cada día» hasta marcarlos como hechos | ✅ | Formato `🔔 diario` en la línea. Sin hora usa tu hora de siempre. Botones: Hecho / En 2 h / Mañana. La nota rápida entiende «todos los días», «cada día» y «hasta que lo haga». |
+| Clientes y proyectos desde tus carpetas (dentro o fuera del vault) | ✅ | Los detecta solo la primera vez y te avisa. Solo lee, nunca escribe. Genera `90-Lumi/clientes-y-proyectos.md` para la IA y la búsqueda. |
+| Un proyecto siempre va dentro de un cliente | ✅ | Por su carpeta, por `cliente:` en su nota o porque tú lo asignas. Si guardas un pendiente con cliente y proyecto, Lumi lo aprende. |
+| Selector cliente → proyecto con búsqueda (reemplaza las etiquetas sueltas) | ✅ | Primero el cliente y luego sus proyectos. Los que más usas aparecen arriba. Funciona con teclado. Con más de 5 etiquetas, el filtro de Pendientes es un solo menú. |
+| Probar en Mac y Windows reales que ya no se traba | ⏳ | Si vuelve a pasar: bandeja → «Ver registro de Lumi» y mándame lo último. |
+
 ## Decisiones tomadas al construir
 - **La interfaz llama al proceso principal y nunca a la IA directo.** Las claves no salen del proceso principal y se cifran con `safeStorage`.
 - **Los embeddings corren en una ventana oculta (WASM), no con onnxruntime nativo.** Así se evitan módulos nativos difíciles de empaquetar en Mac (universal) y Windows.
@@ -111,3 +126,7 @@ Todo se probó con pruebas automáticas (97 en total, 42 nuevas) y con la app co
 - **Cambio de look por chat con un modo que tiene look propio:** lo que cubre el look del modo se cambia en el modo; si no, no se vería.
 - **Categorías = etiqueta del modo** (`#personal/casa`, `#escuela/tramites`), igual que las materias (`#escuela/calculo-i`): no se crean notas por categoría y el plugin Tasks puede filtrarlas. En Escuela, si la etiqueta coincide con una materia es materia; si no, categoría. Una categoría nueva se agrega sola a la lista del modo (`modes.lista[].categorias`). Configuraciones guardadas antes usan las categorías por defecto.
 - **Gemini y menores:** «Lumi sin IA» bloquea cualquier proveedor en el proceso principal (no solo en la interfaz).
+- **Recordatorio diario = `🔔 diario` en la línea** (no `🔁 every day`): en el plugin Tasks, `🔁` crea una copia nueva al completarlo. Aquí «Hecho» lo termina para siempre. Se avisa una vez por día (la clave del aviso lleva la fecha) y no cuenta para «¿paso lo de hoy a mañana?».
+- **Clientes y proyectos de tus carpetas: solo lectura.** La carpeta puede estar dentro del vault (ruta relativa) o fuera (ruta completa). Lo que tú asignas (proyecto → cliente) se guarda en la configuración (`catalog.assign`). Los proyectos nuevos que creas con Lumi llevan `cliente: "[[…]]"` en su nota.
+- **Etiquetas del pendiente: `#cliente/x #proyecto/y`.** Si una línea solo trae el proyecto, Lumi muestra también su cliente. No reescribe la línea.
+- **La burbuja se rehace en vez de repararse:** si su ventana se cae, no responde o no aparece a tiempo, se destruye y se crea otra, que pide el aviso actual al cargar.

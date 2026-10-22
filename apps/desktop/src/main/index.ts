@@ -5,12 +5,12 @@ import { enabledModes } from "@lumi/shared";
 import { loadSettings, getSettings } from "./settings";
 import { loadState } from "./state";
 import { loadSecrets } from "./secrets";
-import { createWindows, hidePanel, markQuitting, modeMenu, send, setAvatarVisible, showPanel, showPanelView } from "./windows";
+import { createWindows, hidePanel, markQuitting, modeMenu, resetWindows, send, setAvatarVisible, showPanel, showPanelView } from "./windows";
 import { registerIpc } from "./ipc";
 import { embedder, getBrain, openVault, scheduleSnapshot } from "./core";
 import { startScheduler } from "./scheduler";
 import { initUpdater } from "./updater";
-import { bus, debounce, log, errorText } from "./util";
+import { bus, debounce, log, errorText, setLogFile } from "./util";
 import { activeMode, setMode } from "./modes";
 
 app.setName("Lumi");
@@ -44,6 +44,8 @@ function trayMenu(): Menu {
     { label: "Esconder a Lumi", click: () => setAvatarVisible(false) },
     { type: "separator" },
     { label: "Abrir mi vault", click: () => void (getBrain() && shell.openPath(getBrain()!.vault.root)) },
+    { label: "¿Lumi se trabó? Reiniciar sus ventanas", click: () => resetWindows() },
+    { label: "Ver registro de Lumi", click: () => void shell.openPath(path.join(app.getPath("userData"), "lumi.log")) },
     { type: "separator" },
     { label: "Salir de Lumi", click: () => app.quit() },
   ]);
@@ -83,7 +85,13 @@ function registerShortcuts(): void {
   }
 }
 
+// Un error suelto no debe dejar a Lumi a medias: se registra y se sigue
+process.on("uncaughtException", (e) => log.error("Error no atrapado:", e));
+process.on("unhandledRejection", (e) => log.error("Promesa rechazada:", e));
+
 async function start(): Promise<void> {
+  setLogFile(path.join(app.getPath("userData"), "lumi.log"));
+  log.info(`Lumi ${app.getVersion()} en ${process.platform}`);
   loadSettings();
   loadState();
   loadSecrets();

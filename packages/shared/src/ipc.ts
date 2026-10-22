@@ -128,6 +128,16 @@ export interface LumiInvoke {
   deleteTask(key: string): Promise<Result>;
   getTaskDraft(key: string): Promise<TaskDraft | null>;
 
+  // clientes y proyectos (tus carpetas)
+  /** Elige con un diálogo la carpeta de clientes o de proyectos (o null para quitarla). */
+  catalogChooseFolder(kind: "clientes" | "proyectos"): Promise<Result<string>>;
+  catalogSetFolder(kind: "clientes" | "proyectos", path: string | null): Promise<Result<string>>;
+  catalogRescan(): Promise<Result<string>>;
+  /** Asigna (o quita, con null) el cliente de un proyecto. */
+  catalogAssign(project: string, client: string | null): Promise<Result>;
+  /** Crea un cliente, o un proyecto dentro de un cliente. */
+  createEntity(kind: "cliente" | "proyecto", name: string, client?: string | null): Promise<Result<string>>;
+
   // chat
   chatHistory(): Promise<ChatMessage[]>;
   chatSend(text: string): Promise<ChatMessage>;
@@ -230,6 +240,11 @@ export const INVOKE_METHODS: (keyof LumiInvoke)[] = [
   "toggleTask",
   "deleteTask",
   "getTaskDraft",
+  "catalogChooseFolder",
+  "catalogSetFolder",
+  "catalogRescan",
+  "catalogAssign",
+  "createEntity",
   "chatHistory",
   "chatSend",
   "chatClear",
@@ -273,7 +288,7 @@ export const INVOKE_METHODS: (keyof LumiInvoke)[] = [
 ];
 
 /** Vistas del menú que se pueden abrir desde fuera (clic derecho, bandeja). */
-export type PanelView = "home" | "appearance" | "chat" | "school" | "personal" | "modes" | "review";
+export type PanelView = "home" | "appearance" | "chat" | "school" | "personal" | "modes" | "review" | "clients";
 
 /** Eventos que el proceso principal envía a las ventanas. */
 export interface LumiEvents {

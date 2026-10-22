@@ -11,7 +11,7 @@ function Avatar() {
   // Con una sesión de estudio, el reloj avanza cada segundo
   const now = useNow(snap?.school.study ? 1000 : 30_000);
   const [dragging, setDragging] = useState(false);
-  const press = useRef<{ x: number; y: number; dragging: boolean } | null>(null);
+  const press = useRef<{ x: number; y: number; dragging: boolean; beat: number } | null>(null);
 
   const endOfToday = addDays(startOfDay(now), 1);
   const info = snap ? modeInfo(snap) : null;
@@ -63,17 +63,33 @@ function Avatar() {
       onPointerDown={(e) => {
         if (e.button !== 0 || e.ctrlKey) return; // ctrl+clic en Mac = clic derecho
         e.currentTarget.setPointerCapture(e.pointerId);
-        press.current = { x: e.screenX, y: e.screenY, dragging: false };
+        press.current = { x: e.screenX, y: e.screenY, dragging: false, beat: 0 };
         void lumi.avatarPress();
       }}
       onPointerMove={(e) => {
         const p = press.current;
-        if (!p || p.dragging) return;
+        if (!p) return;
+        if (p.dragging) {
+          // «Sigo arrastrando»: si esta señal se corta, Lumi deja de seguir al mouse
+          if (e.timeStamp - p.beat > 200) {
+            p.beat = e.timeStamp;
+            void lumi.avatarDrag(true);
+          }
+          return;
+        }
         if (Math.hypot(e.screenX - p.x, e.screenY - p.y) > 4) {
           p.dragging = true;
+          p.beat = e.timeStamp;
           setDragging(true);
           void lumi.avatarDrag(true);
         }
+      }}
+      onLostPointerCapture={() => {
+        const p = press.current;
+        if (!p?.dragging) return;
+        press.current = null;
+        setDragging(false);
+        void lumi.avatarDrag(false);
       }}
       onPointerUp={() => {
         const p = press.current;

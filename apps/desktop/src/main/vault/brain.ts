@@ -10,6 +10,7 @@ import {
   birthdayKey,
   categoryFromTags,
   categoryTag,
+  dailyStartDate,
   modeCategories,
   prettySlug,
   daysUntil,
@@ -57,6 +58,9 @@ import { Indexer } from "../index/indexer";
 import { Searcher } from "../index/search";
 import { BrainEmbedder, EmbeddingQueue } from "../index/embeddings";
 import { debounce, errorText, log } from "../util";
+import { catalogNote, linkName, resolveDir, scanCatalog, type CatalogConfig, type CatalogEntry } from "./catalog";
+
+export const CATALOG_NOTE = "90-Lumi/clientes-y-proyectos.md";
 
 interface TaskRow {
   nfm?: string;
@@ -107,6 +111,15 @@ export class Brain {
   private defaultTime = "09:00";
   /** Modos activos: deciden a qué modo pertenece cada nota y pendiente. */
   private modes: Mode[] = [];
+  /** Tus carpetas de clientes y proyectos (solo se leen). */
+  private catalogCfg: CatalogConfig & { assign: Record<string, string> } = { clientsDir: null, projectsDir: null, assign: {} };
+  private catalogEntries: CatalogEntry[] = [];
+  catalogInfo: { lastScan: string | null; error: string | null } = { lastScan: null, error: null };
+  private catalogScan: Promise<void> | null = null;
+  private catalogAgain = false;
+  private catalogTimer: NodeJS.Timeout | null = null;
+  private catalogSoon = debounce(() => void this.rescanCatalog(), 1500);
+  private closed = false;
 
   constructor(
     root: string,
@@ -145,6 +158,85 @@ export class Brain {
   async start(): Promise<void> {
     await this.reindex();
     this.watch();
+    await this.rescanCatalog();
+    // Las carpetas de fuera del vault no avisan cuando cambian: se revisan cada 10 minutos
+    this.catalogTimer = setInterval(() => {
+      if (this.catalogCfg.clientsDir || this.catalogCfg.projectsDir) void this.rescanCatalog();
+    }, 10 * 60_000);
+  }
+
+  /* --------------------- Clientes y proyectos (carpetas) --------------------- */
+
+  /** Cambia las carpetas o las asignaciones; vuelve a leer si cambiaron las carpetas. */
+  setCatalogConfig(cfg: CatalogConfig & { assign: Record<string, string> }, rescan = true): void {
+    const dirsChanged = cfg.clientsDir !== this.catalogCfg.clientsDir || cfg.projectsDir !== this.catalogCfg.projectsDir;
+    const assignChanged = JSON.stringify(cfg.assign) !== JSON.stringify(this.catalogCfg.assign);
+    this.catalogCfg = { clientsDir: cfg.clientsDir, projectsDir: cfg.projectsDir, assign: { ...cfg.assign } };
+    if (!rescan) return;
+    if (dirsChanged) void this.rescanCatalog();
+    else if (assignChanged) {
+      void this.writeCatalogNote();
+      this.onChange();
+    }
+  }
+
+  catalogDirs(): CatalogConfig {
+    return { clientsDir: this.catalogCfg.clientsDir, projectsDir: this.catalogCfg.projectsDir };
+  }
+
+  /** Lee de nuevo tus carpetas de clientes y proyectos. */
+  rescanCatalog(): Promise<void> {
+    if (this.catalogScan) {
+      this.catalogAgain = true;
+      return this.catalogScan;
+    }
+    const run = async () => {
+      do {
+        if (this.closed) return;
+        this.catalogAgain = false;
+        const cfg = this.catalogDirs();
+        try {
+          this.catalogEntries = cfg.clientsDir || cfg.projectsDir ? await scanCatalog(this.vault.root, cfg) : [];
+          this.catalogInfo = { lastScan: new Date().toISOString(), error: null };
+          for (const [k, d] of [["clientes", cfg.clientsDir], ["proyectos", cfg.projectsDir]] as const) {
+            if (d && !fs.existsSync(resolveDir(this.vault.root, d))) this.catalogInfo.error = `No encuentro la carpeta de ${k}: ${d}`;
+          }
+        } catch (e) {
+          this.catalogInfo = { lastScan: new Date().toISOString(), error: errorText(e) };
+          log.warn("catálogo:", errorText(e));
+        }
+        await this.writeCatalogNote();
+        this.onChange();
+      } while (this.catalogAgain);
+    };
+    this.catalogScan = run().finally(() => (this.catalogScan = null));
+    return this.catalogScan;
+  }
+
+  /** ¿Esta ruta (absoluta) cae dentro de tus carpetas de clientes o proyectos? */
+  private inCatalogDirs(abs: string): boolean {
+    return [this.catalogCfg.clientsDir, this.catalogCfg.projectsDir].some((d) => {
+      if (!d) return false;
+      const base = resolveDir(this.vault.root, d);
+      return abs === base || abs.startsWith(base + path.sep);
+    });
+  }
+
+  /** La lista en 90-Lumi para que la búsqueda y la IA también la tengan. Solo se escribe si cambió. */
+  private async writeCatalogNote(): Promise<void> {
+    if (this.closed) return;
+    try {
+      const ents = this.entities().filter((e) => e.kind !== "persona");
+      if (!ents.length && !(await this.vault.exists(CATALOG_NOTE))) return;
+      const body = catalogNote(ents, this.catalogDirs());
+      const cur = await this.vault.read(CATALOG_NOTE);
+      if (cur && cur.body.trim() === body.trim()) return;
+      if (cur && !this.vault.isLumiOwned(cur.fm)) return;
+      await this.vault.writeLumi(CATALOG_NOTE, { type: "catalogo" }, body);
+      await this.indexer.indexFile(CATALOG_NOTE);
+    } catch (e) {
+      log.warn("catálogo (nota):", errorText(e));
+    }
   }
 
   async reindex(): Promise<void> {
@@ -179,6 +271,7 @@ export class Brain {
     });
     const onFile = async (p: string, removed: boolean) => {
       const rel = this.vault.rel(p);
+      if (this.inCatalogDirs(p)) this.catalogSoon();
       if (rel === ".lumiignore") {
         await this.reindex();
         return;
@@ -195,9 +288,14 @@ export class Brain {
     this.watcher.on("add", (p) => onFile(p, false));
     this.watcher.on("change", (p) => onFile(p, false));
     this.watcher.on("unlink", (p) => onFile(p, true));
+    // Una carpeta nueva de cliente o proyecto (aunque esté vacía) también cuenta
+    this.watcher.on("addDir", (p) => this.inCatalogDirs(p) && this.catalogSoon());
+    this.watcher.on("unlinkDir", (p) => this.inCatalogDirs(p) && this.catalogSoon());
   }
 
   async close(): Promise<void> {
+    this.closed = true;
+    if (this.catalogTimer) clearInterval(this.catalogTimer);
     await this.watcher?.close();
     this.idx.db.close();
   }
@@ -211,14 +309,51 @@ export class Brain {
 
   /* ------------------------------ Entidades ------------------------------ */
 
+  /**
+   * Clientes, proyectos y personas que Lumi conoce: tus notas (05-Clientes,
+   * 04-Proyectos, 06-Personas o con «type:») + lo que encontró en tus carpetas.
+   * Cada proyecto sabe de qué cliente es (por su nota, su carpeta o porque tú lo asignaste).
+   */
   entities(): Entity[] {
     const rows = this.idx.db
-      .prepare("SELECT path, type FROM notes WHERE type IN ('cliente','proyecto','persona') ORDER BY path")
-      .all() as { path: string; type: Entity["kind"] }[];
-    return rows.map((r) => {
+      .prepare("SELECT path, type, fm FROM notes WHERE type IN ('cliente','proyecto','persona') ORDER BY path")
+      .all() as { path: string; type: Entity["kind"]; fm: string }[];
+    const out: Entity[] = rows.map((r) => {
       const name = r.path.split("/").pop()!.replace(/\.md$/, "");
-      return { name, kind: r.type, path: r.path, slug: slugify(name) };
+      const e: Entity = { name, kind: r.type, path: r.path, slug: slugify(name), origin: "vault" };
+      if (r.type === "proyecto") {
+        let fm: Frontmatter = {};
+        try {
+          fm = JSON.parse(r.fm || "{}");
+        } catch {
+          /* encabezado roto */
+        }
+        e.client = linkName(fm.cliente ?? fm.client ?? fm.empresa) ?? null;
+      }
+      return e;
     });
+    const byKey = new Map(out.map((e) => [`${e.kind}:${e.slug}`, e]));
+    for (const c of this.catalogEntries) {
+      const slug = slugify(c.name);
+      const known = byKey.get(`${c.kind}:${slug}`);
+      if (known) {
+        if (c.kind === "proyecto" && !known.client && c.client) known.client = c.client;
+        continue;
+      }
+      const e: Entity = { name: c.name, kind: c.kind, path: c.path, slug, origin: "carpeta", ...(c.kind === "proyecto" ? { client: c.client } : {}) };
+      out.push(e);
+      byKey.set(`${c.kind}:${slug}`, e);
+    }
+    // Lo que tú asignaste manda; y el cliente se escribe como lo conoce Lumi
+    const clients = new Map(out.filter((e) => e.kind === "cliente").map((e) => [e.slug, e.name]));
+    for (const e of out) {
+      if (e.kind !== "proyecto") continue;
+      const a = this.catalogCfg.assign[e.slug];
+      if (a !== undefined) e.client = a || null;
+      if (e.client) e.client = clients.get(slugify(e.client)) ?? e.client;
+      else e.client = null;
+    }
+    return out;
   }
 
   tagToEntity(tag: string, ents = this.entities()): Tag | null {
@@ -231,13 +366,15 @@ export class Brain {
   }
 
   /** Crea la nota de un cliente/proyecto/persona si no existe. Devuelve su nombre. */
-  async ensureEntity(kind: Entity["kind"], name: string): Promise<string> {
+  async ensureEntity(kind: Entity["kind"], name: string, client?: string | null): Promise<string> {
     const existing = this.entities().find((e) => e.kind === kind && (e.slug === slugify(name) || e.name.toLowerCase() === name.toLowerCase()));
     if (existing) return existing.name;
     const folder = kind === "cliente" ? FOLDERS.clientes : kind === "proyecto" ? FOLDERS.proyectos : FOLDERS.personas;
     const fileName = safeFileName(name);
     const rel = `${folder}/${fileName}.md`;
-    const tpl = fillTemplate(templateFor(kind === "cliente" ? "Cliente" : kind === "proyecto" ? "Proyecto" : "Persona"), { title: fileName });
+    let tpl = fillTemplate(templateFor(kind === "cliente" ? "Cliente" : kind === "proyecto" ? "Proyecto" : "Persona"), { title: fileName });
+    // El proyecto nace dentro de su cliente
+    if (kind === "proyecto" && client?.trim()) tpl = /^cliente:.*$/m.test(tpl) ? tpl.replace(/^cliente:.*$/m, `cliente: "[[${client.trim()}]]"`) : tpl;
     if (!(await this.vault.exists(rel))) {
       // Las notas de entidades son tuyas: Lumi solo las crea con la plantilla
       await this.vault.createIfMissing(rel, {}, tpl);
@@ -269,11 +406,25 @@ export class Brain {
       if (e) tags.push(e);
       else otherTags.push(t);
     }
+    // Un proyecto siempre es de un cliente: si la línea solo dice el proyecto, se agrega su cliente
+    for (const t of [...tags]) {
+      if (t.kind !== "proyecto") continue;
+      const client = ents.find((e) => e.kind === "proyecto" && e.slug === slugify(t.name))?.client;
+      if (client && !tags.some((x) => x.kind === "cliente" && slugify(x.name) === slugify(client))) tags.unshift({ kind: "cliente", name: client });
+    }
+    tags.sort((a, b) => (a.kind === b.kind ? 0 : a.kind === "cliente" ? -1 : 1));
     let remindAt: string | null = null;
+    const daily = /🔔/u.test(r.raw);
+    const [h, mi] = (r.time ?? this.defaultTime).split(":").map(Number);
     if (r.due) {
       const [y, mo, d] = r.due.split("-").map(Number);
-      const [h, mi] = (r.time ?? this.defaultTime).split(":").map(Number);
       remindAt = new Date(y, mo - 1, d, h, mi).toISOString();
+    }
+    if (daily && !r.done) {
+      // Cada día: el aviso de hoy (o el del día en que empieza, si aún no llega)
+      const now = new Date();
+      const todayAt = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, mi);
+      if (!remindAt || new Date(remindAt) < todayAt) remindAt = todayAt.toISOString();
     }
     // "Mandar factura · Acme" → "Mandar factura" cuando Acme ya se muestra como etiqueta
     let text = r.text;
@@ -298,6 +449,7 @@ export class Brain {
       subject,
       category,
       urgent: /🔺|⏫/u.test(r.raw) || tagList.some((t) => t.toLowerCase() === "urgente"),
+      daily,
     };
   }
 
@@ -331,9 +483,16 @@ export class Brain {
     await this.touch(rel);
   }
 
-  async createTask(draft: TaskDraft): Promise<string> {
+  /** Un recordatorio diario sin fecha empieza hoy (o mañana, si su hora ya pasó). */
+  private withDailyStart(draft: TaskDraft): TaskDraft {
+    return draft.daily && !draft.date ? { ...draft, date: dailyStartDate(draft.time, this.defaultTime) } : draft;
+  }
+
+  async createTask(input: TaskDraft): Promise<string> {
+    const draft = this.withDailyStart(input);
     const tags: Tag[] = [];
-    for (const t of draft.tags) tags.push({ kind: t.kind, name: await this.ensureEntity(t.kind, t.name) });
+    const clientOf = (d: TaskDraft) => d.tags.find((t) => t.kind === "cliente")?.name ?? null;
+    for (const t of draft.tags) tags.push({ kind: t.kind, name: await this.ensureEntity(t.kind, t.name, t.kind === "proyecto" ? clientOf(draft) : null) });
     const cls = this.classTags(draft, draft.mode ?? null) ?? [];
     const line = formatTaskLine({ ...draft, tags, extraTags: [...cls, ...(draft.extraTags ?? [])] });
     await this.vault.appendLumi(FILES.pendientes, line, {
@@ -349,11 +508,13 @@ export class Brain {
   }
 
   /** Cambia un pendiente existente (a petición tuya). Conserva su estado. */
-  async updateTask(key: string, draft: TaskDraft): Promise<string> {
+  async updateTask(key: string, input: TaskDraft): Promise<string> {
+    const draft = this.withDailyStart(input);
     const t = this.task(key);
     if (!t) throw new VaultError("No encontré ese pendiente; quizá cambió en Obsidian.");
     const tags: Tag[] = [];
-    for (const g of draft.tags) tags.push({ kind: g.kind, name: await this.ensureEntity(g.kind, g.name) });
+    const client = draft.tags.find((g) => g.kind === "cliente")?.name ?? null;
+    for (const g of draft.tags) tags.push({ kind: g.kind, name: await this.ensureEntity(g.kind, g.name, g.kind === "proyecto" ? client : null) });
     const indent = /^(\s*)/.exec(t.raw)?.[1] ?? "";
     const isModeTag = (x: string) => this.modes.some((m) => x === m.id);
     // Si el borrador no dice el modo, se conserva el que tenía
@@ -403,7 +564,7 @@ export class Brain {
     const t = this.task(key);
     if (!t) return null;
     const contact = t.links.find((l) => !t.tags.some((g) => g.name === l)) ?? null;
-    return { title: t.text, date: t.due, time: t.time, tags: t.tags, contact, mode: t.mode, subject: t.subject, category: t.category };
+    return { title: t.text, date: t.due, time: t.time, tags: t.tags, contact, mode: t.mode, subject: t.subject, category: t.category, daily: t.daily };
   }
 
   /**

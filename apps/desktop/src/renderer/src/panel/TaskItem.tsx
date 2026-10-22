@@ -5,9 +5,28 @@ import { IconCheck, IconOpen } from "../components/Icons";
 import { lumi } from "../lib/api";
 import { TagChip } from "./ui";
 
+/** «Acme › Sitio web» en una sola etiqueta (el proyecto va dentro de su cliente). */
+function ClientChip({ task }: { task: Task }) {
+  const client = task.tags.find((t) => t.kind === "cliente");
+  const project = task.tags.find((t) => t.kind === "proyecto");
+  if (!client && !project) return null;
+  if (client && project) {
+    return (
+      <span className="tag cliente" title={`Cliente ${client.name} · proyecto ${project.name}`}>
+        {client.name}
+        <span aria-hidden="true" style={{ opacity: 0.55 }}>
+          ›
+        </span>
+        <span style={{ color: "var(--proyecto-fg)" }}>{project.name}</span>
+      </span>
+    );
+  }
+  return <TagChip tag={(client ?? project)!} />;
+}
+
 export function TaskItem({ task, onOpen, now, badge }: { task: Task; onOpen: (t: Task) => void; now: Date; badge?: string | null }) {
   const [busy, setBusy] = useState(false);
-  const late = !task.done && task.remindAt && new Date(task.remindAt) < now;
+  const late = !task.done && !task.daily && task.remindAt && new Date(task.remindAt) < now;
   const where = task.path.split("/").pop()?.replace(/\.md$/, "");
   return (
     <div className="row task-row" style={{ alignItems: "flex-start", gap: 12, padding: "11px 8px 11px 12px", borderRadius: 14, border: "1px solid var(--line)", background: "#fff" }}>
@@ -46,7 +65,15 @@ export function TaskItem({ task, onOpen, now, badge }: { task: Task; onOpen: (t:
         </span>
         <span className="row wrap" style={{ gap: 6 }}>
           <span style={{ fontSize: 12, fontWeight: 600, color: late ? "var(--sun-ink)" : "var(--muted)" }}>
-            {late ? `Atrasado · ${whenLabel(task.remindAt, now)}` : task.done ? `Hecho${task.doneDate ? ` · ${task.doneDate}` : ""}` : task.remindAt ? whenLabel(task.remindAt, now) : "Sin fecha"}
+            {task.daily && !task.done
+              ? `🔔 Cada día${task.time ? ` · ${task.time}` : ""}`
+              : late
+                ? `Atrasado · ${whenLabel(task.remindAt, now)}`
+                : task.done
+                  ? `Hecho${task.doneDate ? ` · ${task.doneDate}` : ""}`
+                  : task.remindAt
+                    ? whenLabel(task.remindAt, now)
+                    : "Sin fecha"}
           </span>
           {badge && (
             <span className="tag neutral" title="De otro modo">
@@ -55,9 +82,7 @@ export function TaskItem({ task, onOpen, now, badge }: { task: Task; onOpen: (t:
           )}
           {task.subject && <span className="tag neutral">📘 {task.subject}</span>}
           {task.category && <span className="tag neutral">{task.category}</span>}
-          {task.tags.map((t) => (
-            <TagChip key={t.kind + t.name} tag={t} />
-          ))}
+          <ClientChip task={task} />
           {!task.lumiFile && where && <span className="tag neutral">{where}</span>}
         </span>
       </button>

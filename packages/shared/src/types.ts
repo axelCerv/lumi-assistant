@@ -41,6 +41,8 @@ export interface Task {
   category: string | null;
   /** Prioridad alta (🔺/⏫ o #urgente): avisa aunque estés en otro modo. */
   urgent: boolean;
+  /** 🔔 diario: te lo recuerda cada día (a su hora o a la de siempre) hasta que lo marques. */
+  daily: boolean;
 }
 
 export interface TaskDraft {
@@ -61,6 +63,8 @@ export interface TaskDraft {
   subject?: string | null;
   /** Categoría del modo (Personal, Escuela…). undefined = no cambia; null = sin categoría. */
   category?: string | null;
+  /** Recordarlo cada día hasta que se marque como hecho. */
+  daily?: boolean;
 }
 
 export interface Meeting {
@@ -104,6 +108,24 @@ export interface Entity {
   kind: "cliente" | "proyecto" | "persona";
   path: string;
   slug: string;
+  /** Proyectos: el cliente al que pertenecen (null = falta asignarlo). */
+  client?: string | null;
+  /** «vault»: nota de Lumi (05-Clientes, 04-Proyectos); «carpeta»: encontrado en tus carpetas de clientes/proyectos. */
+  origin?: "vault" | "carpeta";
+}
+
+/** Estado de la lectura de tus carpetas de clientes y proyectos. */
+export interface CatalogStatus {
+  clientsDir: string | null;
+  projectsDir: string | null;
+  clients: number;
+  projects: number;
+  /** Proyectos sin cliente (hay que asignarlos). */
+  unassigned: number;
+  lastScan: string | null;
+  error: string | null;
+  /** Carpetas del vault que parecen de clientes o de proyectos. */
+  suggestions: { clients: string[]; projects: string[] };
 }
 
 export interface MemoryFact {
@@ -213,6 +235,8 @@ export interface BubblePayload {
   studyPhase?: "enfoque" | "descanso";
   /** Cierre del día: cuántos pendientes de hoy se pueden pasar a mañana. */
   movable?: number;
+  /** Recordatorio diario (se repite hasta que lo marques). */
+  daily?: boolean;
 }
 
 /* ------------------------------ Modos ------------------------------ */
@@ -345,6 +369,7 @@ export interface AppSnapshot {
   meetings: Meeting[];
   routines: Routine[];
   entities: Entity[];
+  catalog: CatalogStatus;
   proposals: FactProposal[];
   index: IndexStatus;
   calendars: { google: ServiceStatus; microsoft: ServiceStatus; ics: (ServiceStatus & { id: string })[]; updatedAt: string | null };

@@ -3,11 +3,11 @@
  * ventana oculta ("cerebro") que calcula embeddings. Todas transparentes, sin
  * bordes y siempre encima (menos la oculta).
  */
-import { app, BrowserWindow, Menu, screen, type MenuItemConstructorOptions, type Rectangle } from "electron";
+import { app, BrowserWindow, Menu, powerMonitor, screen, type MenuItemConstructorOptions, type Rectangle } from "electron";
 import path from "node:path";
 import { enabledModes, type BubblePayload, type LumiEvents, type PanelView } from "@lumi/shared";
 import { getSettings, updateSettings } from "./settings";
-import { bus, emitChanged } from "./util";
+import { bus, emitChanged, log } from "./util";
 import { activeMode, setMode } from "./modes";
 
 const isMac = process.platform === "darwin";
@@ -25,6 +25,11 @@ let panelHiddenAt = 0;
 let currentBubble: BubblePayload | null = null;
 let pressOffset = { x: 0, y: 0 };
 let dragTimer: NodeJS.Timeout | null = null;
+/** Última señal de «sigo arrastrando» de la interfaz (si se pierde el soltar, el arrastre se corta solo). */
+let dragBeat = 0;
+/** Vigila que la burbuja de verdad aparezca después de mandarle un aviso. */
+let bubbleWatch: NodeJS.Timeout | null = null;
+let bubbleShownAt = 0;
 
 function pageUrl(page: string): { url?: string; file?: string } {
   if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL) return { url: `${process.env.ELECTRON_RENDERER_URL}/${page}.html` };
@@ -93,8 +98,7 @@ export function createWindows(): void {
   load(avatar, "avatar");
   avatar.once("ready-to-show", () => avatar?.showInactive());
 
-  bubble = floating({ width: BUBBLE_W, height: 200, focusable: false, acceptFirstMouse: true, title: "Lumi · Aviso" });
-  load(bubble, "bubble");
+  createBubble();
 
   panel = floating({ width: PANEL.w, height: PANEL.h, acceptFirstMouse: true, title: "Lumi · Menú" });
   load(panel, "panel");
@@ -117,14 +121,110 @@ export function createWindows(): void {
   load(brainWin, "brain");
 
   // Cerrar una ventana solo la esconde (para salir: ícono de la bandeja)
-  for (const w of [avatar, bubble, panel]) {
-    w.on("close", (e) => {
-      if (!quitting) {
-        e.preventDefault();
-        w.hide();
-      }
-    });
+  for (const w of [avatar, panel]) hideOnClose(w);
+  watchHealth(avatar, "avatar");
+  watchHealth(panel, "panel");
+
+  // Al volver de la suspensión o desbloquear, la burbuja se rehace (la GPU pudo reiniciarse)
+  // y Lumi se acomoda por si cambiaron las pantallas.
+  const afterWake = () =>
+    setTimeout(() => {
+      recreateBubble("volviste de la suspensión");
+      keepAvatarOnScreen();
+    }, 2000);
+  powerMonitor.on("resume", afterWake);
+  powerMonitor.on("unlock-screen", afterWake);
+  screen.on("display-removed", () => keepAvatarOnScreen());
+  screen.on("display-metrics-changed", () => keepAvatarOnScreen());
+  app.on("child-process-gone", (_e, d) => {
+    if (d.type !== "GPU" || quitting) return;
+    log.warn("GPU reiniciada:", d.reason);
+    setTimeout(() => {
+      recreateBubble("se reinició la GPU");
+      for (const w of [avatar, panel]) if (w && !w.isDestroyed()) w.webContents.reload();
+    }, 1500);
+  });
+}
+
+function hideOnClose(w: BrowserWindow): void {
+  w.on("close", (e) => {
+    if (!quitting) {
+      e.preventDefault();
+      w.hide();
+    }
+  });
+}
+
+/** Si una ventana se cae o se congela, se recupera sola (sin reiniciar la app). */
+function watchHealth(w: BrowserWindow, name: "avatar" | "bubble" | "panel"): void {
+  w.webContents.on("render-process-gone", (_e, d) => {
+    if (quitting || w.isDestroyed()) return;
+    log.warn(`${name}: la ventana se cayó (${d.reason}); la recupero`);
+    if (name === "bubble") recreateBubble(d.reason);
+    else w.webContents.reload();
+  });
+  w.on("unresponsive", () => {
+    if (quitting || w.isDestroyed()) return;
+    log.warn(`${name}: la ventana no responde; la recupero`);
+    if (name === "bubble") recreateBubble("no respondía");
+    else w.webContents.forcefullyCrashRenderer();
+  });
+}
+
+function createBubble(): void {
+  const b = floating({ width: BUBBLE_W, height: 200, focusable: false, acceptFirstMouse: true, title: "Lumi · Aviso" });
+  bubble = b;
+  load(b, "bubble");
+  hideOnClose(b);
+  watchHealth(b, "bubble");
+}
+
+/**
+ * Rehace la ventana de la burbuja desde cero. La nueva pide el aviso actual al
+ * cargar, así que si había uno vuelve a salir (ya con botones que responden).
+ */
+export function recreateBubble(reason: string): void {
+  if (quitting) return;
+  log.warn("Rehago la burbuja:", reason);
+  const old = bubble;
+  createBubble();
+  if (old && !old.isDestroyed()) {
+    old.removeAllListeners("close");
+    old.destroy();
   }
+  if (currentBubble && !panelVisible()) armBubbleWatch();
+}
+
+/** Si la burbuja no confirma que se dibujó en 5 s, se rehace (una sola vez por aviso). */
+function armBubbleWatch(retry = true): void {
+  if (bubbleWatch) clearTimeout(bubbleWatch);
+  bubbleWatch = setTimeout(() => {
+    bubbleWatch = null;
+    if (!currentBubble || panelVisible() || quitting) return;
+    if (bubble && !bubble.isDestroyed() && bubble.isVisible() && bubbleShownAt > 0) return;
+    if (retry) {
+      recreateBubble("no apareció a tiempo");
+      armBubbleWatch(false);
+    }
+  }, 5000);
+}
+
+function keepAvatarOnScreen(): void {
+  if (!avatar || avatar.isDestroyed()) return;
+  const [x, y] = avatar.getPosition();
+  if (onScreen({ x, y })) return;
+  const p = defaultAvatarPos();
+  avatar.setPosition(p.x, p.y);
+  followAvatar();
+}
+
+/** Para la bandeja: «¿Lumi se trabó?» → rehace sus ventanas sin cerrar la app. */
+export function resetWindows(): void {
+  stopDrag();
+  recreateBubble("lo pediste desde la bandeja");
+  for (const w of [avatar, panel]) if (w && !w.isDestroyed()) w.webContents.reload();
+  keepAvatarOnScreen();
+  avatar?.showInactive();
 }
 
 let quitting = false;
@@ -185,7 +285,11 @@ export function hidePanel(): void {
   panel?.hide();
   panelHiddenAt = Date.now();
   // Si había un aviso esperando, ahora sí sale
-  if (currentBubble) send("bubble", "bubble", currentBubble);
+  if (currentBubble) {
+    bubbleShownAt = 0;
+    send("bubble", "bubble", currentBubble);
+    armBubbleWatch();
+  }
 }
 
 export function togglePanel(): void {
@@ -208,7 +312,13 @@ export function bubbleBusy(): boolean {
 
 export function showBubble(payload: BubblePayload): void {
   currentBubble = { ...payload, side: sideForBubble() };
-  if (!panelVisible()) send("bubble", "bubble", currentBubble);
+  bubbleShownAt = 0;
+  if (!panelVisible()) {
+    // Si la ventana de la burbuja se cayó, se rehace antes de mandarle el aviso
+    if (!bubble || bubble.isDestroyed() || bubble.webContents.isCrashed()) recreateBubble("estaba caída");
+    else send("bubble", "bubble", currentBubble);
+    armBubbleWatch();
+  }
   emitChanged();
 }
 
@@ -217,14 +327,32 @@ export function getBubble(): BubblePayload | null {
 }
 
 export function bubbleReady(width: number, height: number): void {
-  if (!bubble || !currentBubble || panelVisible()) return;
-  placeBeside(bubble, { w: Math.ceil(width), h: Math.ceil(height) }, currentBubble.side);
-  bubble.showInactive();
+  if (!bubble || bubble.isDestroyed() || !currentBubble || panelVisible()) return;
+  const w = Math.max(40, Math.ceil(width));
+  const h = Math.max(40, Math.ceil(height));
+  const b = bubble.getBounds();
+  if (!(bubble.isVisible() && b.width === w && b.height === h)) {
+    placeBeside(bubble, { w, h }, currentBubble.side);
+    if (!bubble.isVisible()) bubble.showInactive();
+    // Que se vuelva a dibujar completa con el tamaño nuevo (si no, en Windows la parte
+    // nueva puede quedar transparente y los clics la atraviesan)
+    bubble.webContents.invalidate();
+  }
+  bubbleShownAt = Date.now();
+  if (bubbleWatch) {
+    clearTimeout(bubbleWatch);
+    bubbleWatch = null;
+  }
 }
 
 export function hideBubble(): void {
   currentBubble = null;
-  bubble?.hide();
+  bubbleShownAt = 0;
+  if (bubbleWatch) {
+    clearTimeout(bubbleWatch);
+    bubbleWatch = null;
+  }
+  if (bubble && !bubble.isDestroyed()) bubble.hide();
   emitChanged();
 }
 
@@ -316,25 +444,33 @@ function followAvatar(): void {
 export function avatarDrag(active: boolean): void {
   if (!avatar) return;
   if (active) {
+    dragBeat = Date.now();
     if (dragTimer) return;
     dragTimer = setInterval(() => {
-      if (!avatar) return;
+      if (!avatar || avatar.isDestroyed()) return stopDrag();
+      // Si se perdió el «soltar» (otra ventana se puso encima, el sistema se lo comió…),
+      // Lumi deja de seguir al mouse en vez de quedarse pegado.
+      if (Date.now() - dragBeat > 1500) return stopDrag();
       const c = screen.getCursorScreenPoint();
       avatar.setPosition(Math.round(c.x - pressOffset.x), Math.round(c.y - pressOffset.y));
       followAvatar();
     }, 16);
-  } else {
-    if (dragTimer) clearInterval(dragTimer);
-    dragTimer = null;
-    // Si quedó fuera del área visible, se acomoda
-    const b = avatar.getBounds();
-    const wa = workAreaFor(b);
-    const x = Math.min(Math.max(b.x, wa.x), wa.x + wa.width - b.width);
-    const y = Math.min(Math.max(b.y, wa.y), wa.y + wa.height - b.height);
-    avatar.setPosition(x, y);
-    followAvatar();
-    updateSettings({ avatarPos: { x, y } });
-  }
+  } else stopDrag();
+}
+
+function stopDrag(): void {
+  if (dragTimer) clearInterval(dragTimer);
+  const wasDragging = !!dragTimer;
+  dragTimer = null;
+  if (!wasDragging || !avatar || avatar.isDestroyed()) return;
+  // Si quedó fuera del área visible, se acomoda
+  const b = avatar.getBounds();
+  const wa = workAreaFor(b);
+  const x = Math.min(Math.max(b.x, wa.x), wa.x + wa.width - b.width);
+  const y = Math.min(Math.max(b.y, wa.y), wa.y + wa.height - b.height);
+  avatar.setPosition(x, y);
+  followAvatar();
+  updateSettings({ avatarPos: { x, y } });
 }
 
 export function brainWindow(): BrowserWindow | null {

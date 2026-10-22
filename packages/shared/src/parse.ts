@@ -17,6 +17,8 @@ export interface ParsedNote {
   contact: string | null;
   /** Explica de dónde salió la hora, p. ej. "antes de comer → 13:00". */
   reason: string | null;
+  /** «todos los días», «cada día», «hasta que lo haga»: recordarlo a diario hasta marcarlo. */
+  daily: boolean;
 }
 
 const WEEKDAYS = ["domingo", "lunes", "martes", "miercoles", "jueves", "viernes", "sabado"];
@@ -89,6 +91,11 @@ export function parseNote(input: string, knownTags: Tag[] = [], now: Date = new 
     const re = new RegExp(`(^|[^a-z0-9])${escapeRe(stripAccents(k.name).toLowerCase())}($|[^a-z0-9])`);
     if (re.test(work)) tags.push(k);
   }
+
+  // ---- ¿cada día? ----
+  const daily = !!take(
+    /\b(?:y )?(?:todos los dias|todas las mananas|cada dia|cada manana|a diario|diariamente|diario|hasta que (?:lo|la) (?:haga|termine|marque|acabe))\b/,
+  );
 
   // ---- fecha y hora ----
   let day: Date | null = null;
@@ -214,7 +221,14 @@ export function parseNote(input: string, knownTags: Tag[] = [], now: Date = new 
 
   // ---- armar la fecha final ----
   let when: Date | null = exact;
-  if (!when) {
+  if (daily && !when && !day) {
+    // Cada día: sin hora, a la hora de siempre (la decide quien guarda el pendiente)
+    if (hour !== null) {
+      when = new Date(now);
+      when.setHours(hour, minute, 0, 0);
+      if (when.getTime() <= now.getTime()) when = addDays(when, 1);
+    } else reason = "cada día, a tu hora de siempre";
+  } else if (!when) {
     if (day && hour !== null) {
       when = new Date(day);
       when.setHours(hour, minute, 0, 0);
@@ -274,7 +288,7 @@ export function parseNote(input: string, knownTags: Tag[] = [], now: Date = new 
   if (!title) title = original;
   title = title[0].toUpperCase() + title.slice(1);
 
-  return { title, remindAt: when ? when.toISOString() : null, tags, contact, reason };
+  return { title, remindAt: when ? when.toISOString() : null, tags, contact, reason, daily };
 }
 
 function compact(s: string): string {

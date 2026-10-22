@@ -341,9 +341,61 @@ function PendingList({
     if (t.subject) used.set(`materia:${t.subject}`, { kind: "materia", name: t.subject });
   }
 
+  // Con muchos clientes y proyectos, un solo selector (cliente › proyecto) en vez de un mar de etiquetas
+  const clientsUsed = [...used.values()].filter((g) => g.kind === "cliente").sort((a, b) => a.name.localeCompare(b.name, "es"));
+  const projectsUsed = [...used.values()].filter((g) => g.kind === "proyecto");
+  const subjectsUsed = [...used.values()].filter((g) => g.kind === "materia");
+  const ownerOf = (project: string) => snap.entities.find((e) => e.kind === "proyecto" && e.name === project)?.client ?? null;
+  const looseProjects = projectsUsed.filter((p) => !clientsUsed.some((c) => c.name === ownerOf(p.name)));
+
   return (
     <>
-      {used.size > 0 && (
+      {used.size > 5 && (
+        <div className="row" style={{ gap: 8 }}>
+          <label htmlFor="filtro" className="sr-only">
+            Filtrar por cliente o proyecto
+          </label>
+          <select id="filtro" className="select" style={{ height: 36, background: "#fff", flex: 1 }} value={filter ?? ""} onChange={(e) => setFilter(e.target.value || null)}>
+            <option value="">Todos los pendientes</option>
+            {clientsUsed.map((c) => (
+              <optgroup key={c.name} label={c.name}>
+                <option value={`cliente:${c.name}`}>{c.name} · todo</option>
+                {projectsUsed
+                  .filter((p) => ownerOf(p.name) === c.name)
+                  .map((p) => (
+                    <option key={p.name} value={`proyecto:${p.name}`}>
+                      {c.name} › {p.name}
+                    </option>
+                  ))}
+              </optgroup>
+            ))}
+            {looseProjects.length > 0 && (
+              <optgroup label="Proyectos sin cliente">
+                {looseProjects.map((p) => (
+                  <option key={p.name} value={`proyecto:${p.name}`}>
+                    {p.name}
+                  </option>
+                ))}
+              </optgroup>
+            )}
+            {subjectsUsed.length > 0 && (
+              <optgroup label="Materias">
+                {subjectsUsed.map((m) => (
+                  <option key={m.name} value={`materia:${m.name}`}>
+                    📘 {m.name}
+                  </option>
+                ))}
+              </optgroup>
+            )}
+          </select>
+          {filter && (
+            <button type="button" className="btn btn-ghost" style={{ minHeight: 36, padding: "0 8px" }} onClick={() => setFilter(null)}>
+              Quitar
+            </button>
+          )}
+        </div>
+      )}
+      {used.size > 0 && used.size <= 5 && (
         <div className="row wrap" style={{ gap: 6 }}>
           <button type="button" className={`tag big ${filter === null ? "selected-dark" : "neutral"}`} onClick={() => setFilter(null)}>
             Todos

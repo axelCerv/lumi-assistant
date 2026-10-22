@@ -66,7 +66,7 @@ describe("índice y búsqueda", () => {
   });
 
   it("entidades: clientes con alias", () => {
-    expect(brain.entities()).toEqual([{ name: "Acme", kind: "cliente", path: "05-Clientes/Acme.md", slug: "acme" }]);
+    expect(brain.entities()).toEqual([{ name: "Acme", kind: "cliente", path: "05-Clientes/Acme.md", slug: "acme", origin: "vault" }]);
   });
 });
 

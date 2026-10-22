@@ -396,3 +396,109 @@ a {
 details > summary {
   list-style-position: inside;
 }
+
+/* ---------- selector de cliente → proyecto ---------- */
+
+.cp-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 6px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line-strong);
+  background: #fff;
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+  min-width: 0;
+}
+.cp-field:hover {
+  border-color: #cfcde0;
+}
+.cp-field:focus-visible {
+  outline: 2px solid var(--indigo);
+  outline-offset: 1px;
+}
+.cp-pop {
+  border-radius: 14px;
+  background: #fff;
+  border: 1px solid var(--line-strong);
+  box-shadow: 0 8px 22px rgba(30, 32, 51, 0.1);
+  overflow: hidden;
+}
+.cp-search {
+  border: 0;
+  outline: none;
+  height: 34px;
+  font: inherit;
+  font-size: 14px;
+  background: transparent;
+  color: var(--ink);
+  min-width: 0;
+}
+.cp-list {
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+.cp-group {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  padding: 8px 8px 4px;
+}
+.cp-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 38px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  font-size: 14px;
+  cursor: pointer;
+}
+.cp-option.active {
+  background: var(--lavender);
+}
+.cp-dot {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+}
+.cp-dot.cliente {
+  background: var(--cliente-fg);
+}
+.cp-dot.proyecto {
+  background: #d97a1e;
+  border-radius: 50%;
+}
+.seg {
+  display: inline-flex;
+  padding: 3px;
+  gap: 2px;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+.seg button {
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--muted-strong);
+  padding: 6px 10px;
+  border-radius: 9px;
+  cursor: pointer;
+}
+.seg button[aria-checked="true"] {
+  background: var(--indigo);
+  color: #fff;
+}

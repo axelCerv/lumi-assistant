@@ -23,12 +23,15 @@ const KIND_LABEL: Record<BubblePayload["kind"], string> = {
   cierre: "Cierre del día",
 };
 
-const act = (a: BubbleAction, minutes?: number) => void lumi.bubbleAction(a, minutes);
-
 function Bubble() {
   const [p, setP] = useState<BubblePayload | null>(null);
   const [key, setKey] = useState(0);
   const card = useRef<HTMLDivElement>(null);
+  // Al tocar un botón, la burbuja se quita de inmediato aquí mismo; no espera a nadie
+  const act = (a: BubbleAction, minutes?: number) => {
+    setP(null);
+    void lumi.bubbleAction(a, minutes).catch(() => {});
+  };
 
   useEffect(() => {
     lumi.getBubble().then((b) => {
@@ -44,9 +47,19 @@ function Bubble() {
   }, []);
 
   useLayoutEffect(() => {
-    if (!p || !card.current) return;
-    const r = card.current.getBoundingClientRect();
-    void lumi.bubbleReady(Math.ceil(r.width), Math.ceil(r.height));
+    const el = card.current;
+    if (!p || !el) return;
+    const report = () => {
+      const r = el.getBoundingClientRect();
+      void lumi.bubbleReady(Math.ceil(r.width), Math.ceil(r.height));
+    };
+    report();
+    // Si el tamaño cambia después (la letra terminó de cargar, por ejemplo), la ventana se ajusta:
+    // así los botones nunca quedan fuera de ella
+    const ro = new ResizeObserver(report);
+    ro.observe(el);
+    void document.fonts?.ready.then(report);
+    return () => ro.disconnect();
   }, [p, key]);
 
   if (!p) return null;
@@ -99,19 +112,32 @@ function Bubble() {
           </div>
         )}
         <div className="row wrap" style={{ gap: 8, marginTop: 2 }}>
-          {p.kind === "recordatorio" && (
-            <>
-              <button className="btn btn-primary" onClick={() => act("done")}>
-                Hecho
-              </button>
-              <button className="btn btn-outline" onClick={() => act("snooze", 30)}>
-                En 30 min
-              </button>
-              <button className="btn btn-ghost" onClick={() => act("snooze", 120)}>
-                En 2 h
-              </button>
-            </>
-          )}
+          {p.kind === "recordatorio" &&
+            (p.daily ? (
+              <>
+                <button className="btn btn-primary" onClick={() => act("done")} title="Ya no te lo recuerdo">
+                  Hecho
+                </button>
+                <button className="btn btn-outline" onClick={() => act("snooze", 120)}>
+                  En 2 h
+                </button>
+                <button className="btn btn-ghost" onClick={() => act("close")} title="Te lo vuelvo a recordar mañana">
+                  Mañana
+                </button>
+              </>
+            ) : (
+              <>
+                <button className="btn btn-primary" onClick={() => act("done")}>
+                  Hecho
+                </button>
+                <button className="btn btn-outline" onClick={() => act("snooze", 30)}>
+                  En 30 min
+                </button>
+                <button className="btn btn-ghost" onClick={() => act("snooze", 120)}>
+                  En 2 h
+                </button>
+              </>
+            ))}
           {p.kind === "reunion" && (
             <>
               {p.link ? (

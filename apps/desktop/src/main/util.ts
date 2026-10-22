@@ -68,10 +68,43 @@ export function uid(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 }
 
+/**
+ * Registro: consola + archivo (userData/lumi.log, máx. ~2 MB, guarda el anterior
+ * como lumi.log.1). Sirve para saber qué pasó si algo se traba.
+ */
+let logFile: string | null = null;
+let logQueue: Promise<void> = Promise.resolve();
+
+export function setLogFile(file: string): void {
+  logFile = file;
+}
+
+function toFile(level: string, a: unknown[]): void {
+  if (!logFile) return;
+  const f = logFile;
+  const line = `${new Date().toISOString()} ${level} ${a.map((x) => (x instanceof Error ? x.stack ?? x.message : typeof x === "string" ? x : JSON.stringify(x))).join(" ")}\n`;
+  logQueue = logQueue
+    .then(async () => {
+      const st = await fs.stat(f).catch(() => null);
+      if (st && st.size > 2_000_000) await fs.rename(f, `${f}.1`).catch(() => {});
+      await fs.appendFile(f, line, "utf8");
+    })
+    .catch(() => {});
+}
+
 export const log = {
-  info: (...a: unknown[]) => console.log("[lumi]", ...a),
-  warn: (...a: unknown[]) => console.warn("[lumi]", ...a),
-  error: (...a: unknown[]) => console.error("[lumi]", ...a),
+  info: (...a: unknown[]) => {
+    console.log("[lumi]", ...a);
+    toFile("INFO", a);
+  },
+  warn: (...a: unknown[]) => {
+    console.warn("[lumi]", ...a);
+    toFile("WARN", a);
+  },
+  error: (...a: unknown[]) => {
+    console.error("[lumi]", ...a);
+    toFile("ERROR", a);
+  },
 };
 
 export function errorText(e: unknown): string {

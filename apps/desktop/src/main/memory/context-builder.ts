@@ -7,6 +7,7 @@
 import type { ActiveMode, ChatSource, Meeting, SearchHit, Task } from "@lumi/shared";
 import {
   addDays,
+  slugify,
   dayLabel,
   daysText,
   describeAvatar,
@@ -170,15 +171,25 @@ export async function buildContext(brain: Brain | null, meetings: Meeting[], que
     const ents = brain.entities().filter((e) => visible(brain.modeOfPath(e.path)));
     if (ents.length) {
       sections.push({
-        title: "Clientes, proyectos y personas conocidos",
-        body: ["cliente", "proyecto", "persona"]
-          .map((k) => {
-            const names = ents.filter((e) => e.kind === k).map((e) => e.name);
-            return names.length ? `${k}s: ${names.slice(0, 80).join(", ")}` : "";
-          })
-          .filter(Boolean)
-          .join("\n"),
-        max: 2500,
+        title: "Clientes (con sus proyectos) y personas conocidos",
+        body: [
+          ...ents
+            .filter((e) => e.kind === "cliente")
+            .slice(0, 120)
+            .map((c) => {
+              const ps = ents.filter((p) => p.kind === "proyecto" && p.client && slugify(p.client) === c.slug).map((p) => p.name);
+              return `- ${c.name}${ps.length ? `: ${ps.slice(0, 30).join(", ")}` : ""}`;
+            }),
+          ...(() => {
+            const loose = ents.filter((p) => p.kind === "proyecto" && !p.client).map((p) => p.name);
+            return loose.length ? [`- Proyectos sin cliente asignado: ${loose.slice(0, 60).join(", ")}`] : [];
+          })(),
+          ...(() => {
+            const people = ents.filter((e) => e.kind === "persona").map((e) => e.name);
+            return people.length ? [`personas: ${people.slice(0, 80).join(", ")}`] : [];
+          })(),
+        ].join("\n"),
+        max: 4000,
       });
     }
   }

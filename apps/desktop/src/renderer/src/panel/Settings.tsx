@@ -63,6 +63,29 @@ export function Settings({ snap, go }: { snap: AppSnapshot; go: (v: View) => voi
           {s.ageGroup === "menor" && <span className="hint">Lumi sin IA (menos de 18 años). Puedes cambiarlo en Modos → Tu edad.</span>}
         </Section>
 
+        <Section title="Clientes y proyectos">
+          <button
+            type="button"
+            className="row"
+            onClick={() => go({ name: "clients" })}
+            style={{ gap: 12, padding: "10px 14px", borderRadius: 14, border: "1px solid var(--line)", background: "#fff", textAlign: "left" }}
+          >
+            <IconFolder size={22} />
+            <span className="grow" style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+              <span style={{ fontSize: 14.5, fontWeight: 600 }}>
+                {snap.catalog.clients} clientes · {snap.catalog.projects} proyectos
+              </span>
+              <span className="hint">
+                {snap.catalog.unassigned
+                  ? `${snap.catalog.unassigned} ${snap.catalog.unassigned === 1 ? "proyecto necesita" : "proyectos necesitan"} su cliente`
+                  : snap.catalog.clientsDir
+                    ? `Los aprendo de «${snap.catalog.clientsDir}»`
+                    : "Dime en qué carpeta tienes a tus clientes"}
+              </span>
+            </span>
+          </button>
+        </Section>
+
         <Section title="Apariencia">
           <button
             type="button"

@@ -129,6 +129,17 @@ export const Settings = z.object({
       birthdayLeadDays: z.number().default(3),
     })
     .default({ closeDay: true, closeDayTime: "20:30", birthdayLeadDays: 3 }),
+  /** Carpetas donde viven tus clientes y proyectos (relativas al vault o rutas completas). */
+  catalog: z
+    .object({
+      clientsDir: z.string().nullable().default(null),
+      projectsDir: z.string().nullable().default(null),
+      /** Ya se buscaron solas una vez (para no volver a sugerir). */
+      autoDetected: z.boolean().default(false),
+      /** Proyecto (slug) → cliente, cuando tú lo asignas. */
+      assign: z.record(z.string(), z.string()).default({}),
+    })
+    .default({ clientsDir: null, projectsDir: null, autoDetected: false, assign: {} }),
   lastDayClose: z.string().nullable().default(null),
   lastLoadAlert: z.string().nullable().default(null),
   lastReviewNudge: z.string().nullable().default(null),

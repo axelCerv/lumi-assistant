@@ -4,6 +4,10 @@
  *
  * ⏰ HH:MM es una extensión de Lumi para la hora del aviso. Va antes de 📅
  * para que el plugin Tasks siga reconociendo la fecha.
+ *
+ * 🔔 diario (otra extensión de Lumi) = recuérdamelo cada día hasta que lo marque:
+ *   - [ ] Tomar vitaminas 🔔 diario ⏰ 09:00 📅 2026-10-21
+ * No usa 🔁 a propósito: en Tasks eso crea una copia nueva al completarlo.
  */
 import type { Tag, TaskDraft } from "./types.ts";
 import { slugify } from "./slug.ts";
@@ -22,7 +26,11 @@ export interface ParsedTaskLine {
   scheduled: string | null;
   tags: string[];
   links: string[];
+  daily: boolean;
 }
+
+export const DAILY_MARK = "🔔 diario";
+const DAILY_RE = /🔔️?(?:\s*(?:diario|cada d[ií]a|todos los d[ií]as|daily))?/iu;
 
 const DATE = "(\\d{4}-\\d{2}-\\d{2})";
 
@@ -41,7 +49,9 @@ export function parseTaskLine(line: string): ParsedTaskLine | null {
   const time = pick("⏰", "(\\d{1,2}:\\d{2})");
   const tags = [...rest.matchAll(/(?:^|\s)#([\p{L}\p{N}_/-]+)/gu)].map((x) => x[1]);
   const links = [...rest.matchAll(/\[\[([^\]|#]+)(?:[#|][^\]]*)?\]\]/g)].map((x) => x[1].trim());
+  const daily = DAILY_RE.test(rest);
   const text = rest
+    .replace(new RegExp(DAILY_RE.source, "giu"), "")
     .replace(/(?:📅|✅|⏳|🛫|➕|❌)️?\s*\d{4}-\d{2}-\d{2}/gu, "")
     .replace(/⏰️?\s*\d{1,2}:\d{2}/gu, "")
     .replace(/🔁️?[^📅✅⏳🛫➕⏰#]*/gu, "")
@@ -64,6 +74,7 @@ export function parseTaskLine(line: string): ParsedTaskLine | null {
     scheduled,
     tags,
     links,
+    daily,
   };
 }
 
@@ -83,7 +94,8 @@ export function formatTaskLine(d: TaskDraft): string {
     }
   }
   const parts = [`- [ ] ${desc}`];
-  if (d.time && d.date) parts.push(`⏰ ${d.time}`);
+  if (d.daily) parts.push(DAILY_MARK);
+  if (d.time && (d.date || d.daily)) parts.push(`⏰ ${d.time}`);
   if (d.date) parts.push(`📅 ${d.date}`);
   const extra = (d.extraTags ?? []).map((t) => `#${t.replace(/^#/, "")}`);
   // La etiqueta del modo va primero, salvo que una etiqueta extra ya lo diga (#escuela/calculo)

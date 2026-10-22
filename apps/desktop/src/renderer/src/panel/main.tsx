@@ -17,6 +17,7 @@ import { NoteEditor } from "./NoteEditor";
 import { Onboarding } from "./Onboarding";
 import { Routines } from "./Routines";
 import { Settings } from "./Settings";
+import { Clients } from "./Clients";
 
 export type View =
   | { name: "home" }
@@ -27,6 +28,7 @@ export type View =
   | { name: "memory" }
   | { name: "appearance" }
   | { name: "modes" }
+  | { name: "clients" }
   | { name: "school" }
   | { name: "personal"; list?: string }
   | { name: "review"; subject?: string | null };
@@ -49,7 +51,7 @@ function Panel() {
           return v;
         }
         if (v.name === "review") return { name: "school" };
-        return v.name === "appearance" || v.name === "modes" ? { name: "settings" } : { name: "home" };
+        return v.name === "appearance" || v.name === "modes" || v.name === "clients" ? { name: "settings" } : { name: "home" };
       });
     };
     window.addEventListener("keydown", onKey);
@@ -68,6 +70,7 @@ function Panel() {
     else if (view.name === "memory") content = <Memory snap={snap} go={setView} />;
     else if (view.name === "appearance") content = <Appearance snap={snap} go={setView} />;
     else if (view.name === "modes") content = <Modes snap={snap} go={setView} />;
+    else if (view.name === "clients") content = <Clients snap={snap} go={setView} />;
     else if (view.name === "school") content = <School snap={snap} go={setView} now={now} />;
     else if (view.name === "personal") content = <Personal key={view.list} snap={snap} go={setView} now={now} list={view.list} />;
     else if (view.name === "review") content = <Review snap={snap} go={setView} subject={view.subject} />;

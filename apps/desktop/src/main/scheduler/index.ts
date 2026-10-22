@@ -3,7 +3,7 @@
  * Orden: saludo del día → reuniones → recordatorios → rutinas → sugerencias →
  * resúmenes periódicos. Un aviso a la vez.
  */
-import { Notification, shell } from "electron";
+import { Notification, powerMonitor, shell } from "electron";
 import {
   addDays,
   classOccurrences,
@@ -48,12 +48,48 @@ function lowerFirst(s: string) {
   return s ? s[0].toLowerCase() + s.slice(1) : s;
 }
 
+/** Notificaciones vivas (si no se guardan, el sistema las puede soltar antes del clic). */
+const liveNotifications = new Set<Notification>();
+
+/**
+ * Notificación del sistema solo si no estás frente a la computadora (2 min sin
+ * mover el mouse ni teclear) o con la pantalla bloqueada. Si estás ahí, basta la
+ * burbuja: así la notificación no tapa los botones del aviso.
+ */
 function notify(title: string, body: string) {
   if (!getSettings().systemNotifications || !Notification.isSupported()) return;
+  try {
+    const state = powerMonitor.getSystemIdleState(120);
+    if (state === "active") return;
+  } catch {
+    /* sin dato de inactividad: se notifica */
+  }
   const n = new Notification({ title, body, silent: false });
-  n.on("click", () => showPanel());
+  liveNotifications.add(n);
+  const drop = () => liveNotifications.delete(n);
+  n.on("click", () => {
+    drop();
+    showPanel();
+  });
+  n.on("close", drop);
+  setTimeout(drop, 10 * 60_000);
   n.show();
 }
+
+/** Avisos de una sola vez que esperan su turno (p. ej. «encontré tus clientes»). */
+const news: BubblePayload[] = [];
+
+// Se escucha desde que carga el módulo: el vault se abre antes de arrancar el reloj
+bus.on("catalog-imported", (x: { clients: number; projects: number; dirs: string[] }) => {
+  const parts = [x.clients ? `${x.clients} ${x.clients === 1 ? "cliente" : "clientes"}` : "", x.projects ? `${x.projects} ${x.projects === 1 ? "proyecto" : "proyectos"}` : ""].filter(Boolean);
+  news.push({
+    kind: "hola",
+    text: `Encontré ${parts.join(" y ")} en tu carpeta «${x.dirs.join("» y «")}». Ya los conozco: los puedes elegir en tus pendientes y los uso para entender tus notas.`,
+    time: "Clientes y proyectos",
+    view: "clients",
+    cta: "Revisarlos",
+  });
+});
 
 function show(p: BubblePayload, systemTitle?: string) {
   showBubble(p);
@@ -201,6 +237,13 @@ export async function tick(): Promise<void> {
       return true;
     };
 
+    // 0a) Novedades de una sola vez
+    const next = news.shift();
+    if (next) {
+      show(next);
+      return;
+    }
+
     // 0) Instalaciones anteriores: presentar los modos una vez
     if (!s.modesIntroduced) {
       updateSettings({ modesIntroduced: true });
@@ -271,6 +314,8 @@ export async function tick(): Promise<void> {
 
     // 3) Recordatorios
     if (brain && !quiet) {
+      // Los diarios se avisan una vez por día (la clave lleva la fecha)
+      const notifiedKey = (t: { key: string; daily: boolean }) => (t.daily ? `${t.key}@${today}` : t.key);
       const due = brain
         .tasks()
         .filter((t) => {
@@ -278,27 +323,34 @@ export async function tick(): Promise<void> {
           if (!allow(t.mode, t.urgent)) return false;
           const snoozed = st.snoozed[t.key];
           if (snoozed) return new Date(snoozed) <= now;
-          return !st.notified[t.key] && new Date(t.remindAt) <= now && now.getTime() - new Date(t.remindAt).getTime() < 3 * 86400000;
+          return !st.notified[notifiedKey(t)] && new Date(t.remindAt) <= now && now.getTime() - new Date(t.remindAt).getTime() < 3 * 86400000;
         })
         .sort((a, b) => (a.remindAt ?? "").localeCompare(b.remindAt ?? ""));
       if (due.length) {
         const t = due[0];
         mutateState((x) => {
-          x.notified[t.key] = now.toISOString();
+          x.notified[notifiedKey(t)] = now.toISOString();
           delete x.snoozed[t.key];
         });
         const at = new Date(t.remindAt!);
         const late = now.getTime() - at.getTime() > 30 * 60_000;
         const lead = name ? `${name}, ` : "";
+        const daysOld = t.daily && t.due ? Math.round((startOfDay(now).getTime() - new Date(`${t.due}T00:00`).getTime()) / 86400000) : 0;
+        const text = t.daily
+          ? `${lead}${daysOld >= 1 ? `sigue pendiente (${daysOld + 1}.º día)` : "tu recordatorio de cada día"}: ${lowerFirst(t.text)}. ¿Hoy sí?`
+          : late
+            ? `${lead}esto quedó pendiente desde las ${fmtTime(at)}: ${lowerFirst(t.text)}. ¿Lo hacemos ahora?`
+            : `${lead}te recuerdo: ${lowerFirst(t.text)}. ¿Lo hacemos ahora?`;
         show(
           {
             kind: "recordatorio",
-            text: late ? `${lead}esto quedó pendiente desde las ${fmtTime(at)}: ${lowerFirst(t.text)}. ¿Lo hacemos ahora?` : `${lead}te recuerdo: ${lowerFirst(t.text)}. ¿Lo hacemos ahora?`,
-            time: fmtTime(at),
+            text,
+            time: t.daily ? "Cada día" : fmtTime(at),
             tags: t.tags,
             taskKey: t.key,
             notePath: t.path,
             fromMode: fromMode(t.mode),
+            daily: t.daily || undefined,
           },
           "Lumi te recuerda",
         );
@@ -391,7 +443,7 @@ export async function tick(): Promise<void> {
           const end = addDays(startOfDay(now), 1);
           const all = brain.tasks();
           const done = all.filter((t) => t.done && t.doneDate === today).length;
-          const left = all.filter((t) => !t.done && t.due && t.remindAt && new Date(t.remindAt) < end).length;
+          const left = all.filter((t) => !t.done && !t.daily && t.due && t.remindAt && new Date(t.remindAt) < end).length;
           const parts = [done === 0 ? "hoy no marcaste pendientes, y está bien" : done === 1 ? "completaste 1 pendiente" : `completaste ${done} pendientes`];
           if (left) parts.push(`${left === 1 ? "queda 1" : `quedan ${left}`} para hoy`);
           show({ kind: "cierre", text: `Cierre del día: ${parts.join(" y ")}.${left ? " ¿Los paso a mañana?" : " ¡Descansa!"}`, time: "Cierre del día", movable: left, view: "home" });
@@ -492,7 +544,7 @@ export async function bubbleAction(action: BubbleAction, minutes?: number): Prom
           const end = addDays(startOfDay(new Date()), 1);
           const keys = brain
             .tasks()
-            .filter((t) => !t.done && t.due && t.remindAt && new Date(t.remindAt) < end)
+            .filter((t) => !t.done && !t.daily && t.due && t.remindAt && new Date(t.remindAt) < end)
             .map((t) => t.key);
           await brain.moveDueToTomorrow(keys, dayKey(end));
         }

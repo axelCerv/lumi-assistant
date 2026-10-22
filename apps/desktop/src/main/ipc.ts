@@ -16,7 +16,10 @@ import {
   type Result,
   type TaskDraft,
 } from "@lumi/shared";
-import { getBrain, embedder, modesChanged, openVault, scheduleSnapshot, snapshot } from "./core";
+import { getBrain, embedder, modesChanged, openVault, refreshCatalogSuggestions, scheduleSnapshot, snapshot } from "./core";
+import { resolveDir, storedPath } from "./vault/catalog";
+import { slugify, type Tag } from "@lumi/shared";
+import { existsSync, statSync } from "node:fs";
 import { activeMode, markChatActivity, rememberCategory, setMode, undoMode } from "./modes";
 import { createStudyPlan, dueCards, generateCards, gradeCard } from "./school";
 import { startBreak, startFocus, stopStudy } from "./school/study";
@@ -44,6 +47,20 @@ import { stringifyNote, today } from "./vault/vault";
 
 const ok = <T>(value?: T): Result<T> => ({ ok: true, value });
 const fail = (e: unknown): Result<never> => ({ ok: false, error: errorText(e) });
+
+/**
+ * Lumi aprende de lo que guardas: si un pendiente lleva un proyecto y un cliente,
+ * y ese proyecto aún no tenía cliente, desde ahora es de ese cliente.
+ */
+function learnProjectClient(tags: Tag[]): void {
+  const b = getBrain();
+  const client = tags.find((t) => t.kind === "cliente")?.name;
+  const project = tags.find((t) => t.kind === "proyecto")?.name;
+  if (!b || !client || !project) return;
+  const known = b.entities().find((e) => e.kind === "proyecto" && e.slug === slugify(project));
+  if (known?.client) return;
+  updateSettings({ catalog: { assign: { [slugify(project)]: client } } });
+}
 
 function needBrain() {
   const b = getBrain();
@@ -306,6 +323,7 @@ const handlers: LumiInvoke = {
   async saveTask(draft: TaskDraft, existingKey) {
     try {
       const b = needBrain();
+      learnProjectClient(draft.tags);
       const modes = enabledModes(getSettings().modes);
       const multi = modes.length > 1;
       if (existingKey) {
@@ -342,6 +360,75 @@ const handlers: LumiInvoke = {
   },
   async getTaskDraft(key) {
     return getBrain()?.taskDraft(key) ?? null;
+  },
+
+  // ---------- clientes y proyectos ----------
+  async catalogChooseFolder(kind) {
+    try {
+      const b = needBrain();
+      const cur = kind === "clientes" ? getSettings().catalog.clientsDir : getSettings().catalog.projectsDir;
+      const r = await dialog.showOpenDialog({
+        title: kind === "clientes" ? "Elige la carpeta donde tienes a tus clientes" : "Elige la carpeta donde tienes tus proyectos",
+        properties: ["openDirectory"],
+        defaultPath: cur ? resolveDir(b.vault.root, cur) : b.vault.root,
+      });
+      if (r.canceled || !r.filePaths[0]) return { ok: false };
+      return await handlers.catalogSetFolder(kind, r.filePaths[0]);
+    } catch (e) {
+      return fail(e);
+    }
+  },
+  async catalogSetFolder(kind, p) {
+    try {
+      const b = needBrain();
+      let value: string | null = null;
+      if (p) {
+        const abs = resolveDir(b.vault.root, p);
+        if (!existsSync(abs) || !statSync(abs).isDirectory()) throw new Error("Esa carpeta no existe.");
+        value = storedPath(b.vault.root, abs);
+      }
+      updateSettings({ catalog: kind === "clientes" ? { clientsDir: value } : { projectsDir: value } });
+      b.setCatalogConfig(getSettings().catalog, false);
+      await b.rescanCatalog();
+      const ents = b.entities();
+      const n = ents.filter((e) => e.kind === (kind === "clientes" ? "cliente" : "proyecto")).length;
+      return ok(value ? `Listo: ahora conozco ${n} ${kind}.` : `Ya no leo una carpeta de ${kind}.`);
+    } catch (e) {
+      return fail(e);
+    }
+  },
+  async catalogRescan() {
+    try {
+      const b = needBrain();
+      await Promise.all([b.rescanCatalog(), refreshCatalogSuggestions()]);
+      scheduleSnapshot();
+      const ents = b.entities();
+      return ok(`${ents.filter((e) => e.kind === "cliente").length} clientes y ${ents.filter((e) => e.kind === "proyecto").length} proyectos.`);
+    } catch (e) {
+      return fail(e);
+    }
+  },
+  async catalogAssign(project, client) {
+    try {
+      updateSettings({ catalog: { assign: { [slugify(project)]: client?.trim() ?? "" } } });
+      return ok();
+    } catch (e) {
+      return fail(e);
+    }
+  },
+  async createEntity(kind, name, client) {
+    try {
+      const b = needBrain();
+      const n = name.trim();
+      if (!n) throw new Error("Escribe un nombre.");
+      if (kind === "proyecto" && !client?.trim()) throw new Error("Un proyecto siempre va dentro de un cliente: elige uno primero.");
+      const finalName = await b.ensureEntity(kind, n, kind === "proyecto" ? client : null);
+      if (kind === "proyecto" && client) updateSettings({ catalog: { assign: { [slugify(finalName)]: client.trim() } } });
+      scheduleSnapshot();
+      return ok(finalName);
+    } catch (e) {
+      return fail(e);
+    }
   },
 
   // ---------- chat ----------

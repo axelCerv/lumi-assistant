@@ -112,3 +112,15 @@ export function daysText(days: number[]): string {
   if (s.join() === "0,6") return "Fines de semana";
   return s.map((d) => cap(DAY_NAMES[d])).join(", ");
 }
+
+/**
+ * Primer día de un recordatorio diario sin fecha: hoy si su hora aún no pasa,
+ * si no, mañana (para no avisar de golpe al crearlo).
+ */
+export function dailyStartDate(time: string | null, defaultTime: string, now: Date = new Date()): string {
+  const [h, m] = (time ?? defaultTime).split(":").map(Number);
+  const at = new Date(now);
+  at.setHours(h || 0, m || 0, 0, 0);
+  const d = at.getTime() > now.getTime() ? now : new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}

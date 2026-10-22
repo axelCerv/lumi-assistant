@@ -1,12 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import type { AppSnapshot, Tag, TagKind, TaskDraft } from "@lumi/shared";
+import type { AppSnapshot, Tag, TaskDraft } from "@lumi/shared";
 import { addDays, dayKey, fmtTime, modeCategories, roundUpQuarter, slugify, startOfDay, taskGrouping, whenLabel } from "@lumi/shared";
 import { LumiFace } from "../components/LumiFace";
 import { lumi } from "../lib/api";
 import { aiReady, modeInfo, tint } from "../lib/modes";
-import { Dots, TagChip, ViewHeader } from "./ui";
-
-const same = (a: Tag, b: Tag) => a.kind === b.kind && a.name.toLowerCase() === b.name.toLowerCase();
+import { Dots, ViewHeader } from "./ui";
+import { ClientPicker, type ClientProject } from "./ClientPicker";
 
 /** Materia o categoría elegida (en modos que no usan cliente/proyecto). */
 type Group = { kind: "materia" | "categoria"; name: string } | null;
@@ -18,12 +17,11 @@ export function NoteEditor({ snap, text, taskKey, onDone }: { snap: AppSnapshot;
   const [title, setTitle] = useState("");
   const [date, setDate] = useState("");
   const [time, setTime] = useState("");
-  const [tags, setTags] = useState<Tag[]>([]);
+  const [cp, setCp] = useState<ClientProject>({ client: null, project: null });
+  const [daily, setDaily] = useState(false);
   const [contact, setContact] = useState("");
   const [reason, setReason] = useState<string | null>(null);
   const [ai, setAi] = useState<"off" | "thinking" | "done" | "fail">("off");
-  const [newTag, setNewTag] = useState("");
-  const [newKind, setNewKind] = useState<TagKind>("cliente");
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -40,7 +38,8 @@ export function NoteEditor({ snap, text, taskKey, onDone }: { snap: AppSnapshot;
     setTitle(d.title);
     setDate(d.date ?? "");
     setTime(d.time ?? "");
-    setTags(d.tags);
+    setCp(toClientProject(d.tags));
+    setDaily(!!d.daily);
     setContact(d.contact ?? "");
     setReason(d.reason ?? null);
     setGroup(d.subject ? { kind: "materia", name: d.subject } : d.category ? { kind: "categoria", name: d.category } : null);
@@ -83,29 +82,29 @@ export function NoteEditor({ snap, text, taskKey, onDone }: { snap: AppSnapshot;
       set(v);
     };
 
-  function toggleTag(t: Tag) {
-    touched.current = true;
-    setTags((cur) => (cur.some((x) => same(x, t)) ? cur.filter((x) => !same(x, t)) : [...cur, t]));
+  /** Etiquetas del borrador → cliente y proyecto (el cliente sale del proyecto si falta). */
+  function toClientProject(tags: Tag[]): ClientProject {
+    const project = tags.find((t) => t.kind === "proyecto")?.name ?? null;
+    let client = tags.find((t) => t.kind === "cliente")?.name ?? null;
+    if (project && !client) client = snap.entities.find((e) => e.kind === "proyecto" && e.name.toLowerCase() === project.toLowerCase())?.client ?? null;
+    return { client, project };
   }
 
-  function addTag(e?: React.FormEvent) {
-    e?.preventDefault();
-    const name = newTag.trim().replace(/^[@#]/, "");
-    if (!name) return;
-    const known = snap.entities.find((k) => k.kind === newKind && k.name.toLowerCase() === name.toLowerCase());
-    const tag: Tag = { kind: newKind, name: known?.name ?? name };
-    if (!tags.some((x) => same(x, tag))) toggleTag(tag);
-    setNewTag("");
-  }
+  const tags: Tag[] = [
+    ...(cp.client ? [{ kind: "cliente" as const, name: cp.client }] : []),
+    ...(cp.project ? [{ kind: "proyecto" as const, name: cp.project }] : []),
+  ];
 
   async function save() {
     if (!title.trim()) return;
+    if (!byCategory && cp.project && !cp.client) return setError(`Elige de qué cliente es «${cp.project}»: un proyecto siempre va dentro de un cliente.`);
     setSaving(true);
     setError(null);
     const draft: TaskDraft = {
       title: title.trim(),
       date: date || null,
-      time: date && time ? time : null,
+      time: (date || daily) && time ? time : null,
+      daily,
       // En Personal, Escuela… no hay cliente ni proyecto: se ordena por materia o categoría
       tags: byCategory ? [] : tags,
       contact: contact.trim() || null,
@@ -177,9 +176,8 @@ export function NoteEditor({ snap, text, taskKey, onDone }: { snap: AppSnapshot;
     setNewCat("");
   }
 
-  const known = snap.entities.filter((e) => e.kind !== "persona").map((e) => ({ kind: e.kind as TagKind, name: e.name }));
-  const unused = known.filter((k) => !tags.some((t) => same(t, k))).slice(0, 10);
   const whenIso = date ? new Date(`${date}T${time || snap.settings.defaultReminderTime}`).toISOString() : null;
+  const todayKey = dayKey(now);
 
   return (
     <>
@@ -226,35 +224,76 @@ export function NoteEditor({ snap, text, taskKey, onDone }: { snap: AppSnapshot;
           </div>
 
           <div>
-            <span className="field-label" style={{ color: "var(--muted-strong)" }}>
-              Cuándo te aviso
-            </span>
-            <div className="row" style={{ gap: 8 }}>
-              <label htmlFor="fecha" className="sr-only">
-                Fecha
-              </label>
-              <input id="fecha" type="date" className="input" style={{ background: "#fff" }} value={date} onChange={(e) => edit(setDate)(e.target.value)} />
-              <label htmlFor="hora" className="sr-only">
-                Hora
-              </label>
-              <input id="hora" type="time" className="input" style={{ background: "#fff", width: 120 }} value={time} disabled={!date} onChange={(e) => edit(setTime)(e.target.value)} />
+            <div className="row" style={{ justifyContent: "space-between", gap: 8, marginBottom: 6 }}>
+              <span id="cuando" className="field-label" style={{ color: "var(--muted-strong)", marginBottom: 0 }}>
+                Cuándo te aviso
+              </span>
+              <span role="radiogroup" aria-labelledby="cuando" className="seg">
+                <button type="button" role="radio" aria-checked={!daily} onClick={() => edit(setDaily)(false)}>
+                  Una vez
+                </button>
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={daily}
+                  title="Te lo recuerdo todos los días hasta que lo marques como hecho"
+                  onClick={() => {
+                    touched.current = true;
+                    setDaily(true);
+                  }}
+                >
+                  🔔 Cada día
+                </button>
+              </span>
             </div>
-            <div className="row wrap" style={{ gap: 6, marginTop: 8 }}>
-              {quick
-                .filter(([, d]) => d)
-                .map(([label, d]) => (
-                  <button key={label} type="button" className="btn btn-outline" style={{ minHeight: 32, fontSize: 12.5, padding: "0 10px" }} onClick={() => setWhen(d)}>
-                    {label}
+            {daily ? (
+              <>
+                <div className="row" style={{ gap: 8 }}>
+                  <label htmlFor="hora-diaria" className="hint" style={{ flex: "none" }}>
+                    A las
+                  </label>
+                  <input id="hora-diaria" type="time" className="input" style={{ background: "#fff", width: 120 }} value={time} onChange={(e) => edit(setTime)(e.target.value)} />
+                  {time && (
+                    <button type="button" className="btn btn-ghost" style={{ minHeight: 32, fontSize: 12.5, padding: "0 8px" }} onClick={() => edit(setTime)("")}>
+                      Sin hora fija
+                    </button>
+                  )}
+                </div>
+                <span className="hint" style={{ display: "block", marginTop: 6 }}>
+                  Te lo recuerdo todos los días{time ? ` a las ${time}` : ` a tu hora de siempre (${snap.settings.defaultReminderTime})`}
+                  {date && date > todayKey ? `, desde el ${new Date(`${date}T12:00`).toLocaleDateString("es-MX", { day: "numeric", month: "long" })}` : ""} hasta que lo marques como hecho. Si un día no puedes, eliges «Mañana».
+                </span>
+              </>
+            ) : (
+              <>
+                <div className="row" style={{ gap: 8 }}>
+                  <label htmlFor="fecha" className="sr-only">
+                    Fecha
+                  </label>
+                  <input id="fecha" type="date" className="input" style={{ background: "#fff" }} value={date} onChange={(e) => edit(setDate)(e.target.value)} />
+                  <label htmlFor="hora" className="sr-only">
+                    Hora
+                  </label>
+                  <input id="hora" type="time" className="input" style={{ background: "#fff", width: 120 }} value={time} disabled={!date} onChange={(e) => edit(setTime)(e.target.value)} />
+                </div>
+                <div className="row wrap" style={{ gap: 6, marginTop: 8 }}>
+                  {quick
+                    .filter(([, d]) => d)
+                    .map(([label, d]) => (
+                      <button key={label} type="button" className="btn btn-outline" style={{ minHeight: 32, fontSize: 12.5, padding: "0 10px" }} onClick={() => setWhen(d)}>
+                        {label}
+                      </button>
+                    ))}
+                  <button type="button" className="btn btn-ghost" style={{ minHeight: 32, fontSize: 12.5, padding: "0 8px" }} onClick={() => setWhen(null)}>
+                    Sin fecha
                   </button>
-                ))}
-              <button type="button" className="btn btn-ghost" style={{ minHeight: 32, fontSize: 12.5, padding: "0 8px" }} onClick={() => setWhen(null)}>
-                Sin fecha
-              </button>
-            </div>
-            <span className="hint" style={{ display: "block", marginTop: 6 }}>
-              {whenIso ? `${whenLabel(whenIso)}${time ? "" : ` (sin hora: te aviso a las ${snap.settings.defaultReminderTime})`}` : "Sin aviso; quedará en Pendientes."}
-              {reason && !touched.current ? ` · ${reason}` : ""}
-            </span>
+                </div>
+                <span className="hint" style={{ display: "block", marginTop: 6 }}>
+                  {whenIso ? `${whenLabel(whenIso)}${time ? "" : ` (sin hora: te aviso a las ${snap.settings.defaultReminderTime})`}` : "Sin aviso; quedará en Pendientes."}
+                  {reason && !touched.current ? ` · ${reason}` : ""}
+                </span>
+              </>
+            )}
           </div>
 
           {info.multi && (
@@ -327,42 +366,19 @@ export function NoteEditor({ snap, text, taskKey, onDone }: { snap: AppSnapshot;
             </div>
           ) : (
             <div>
-              <span className="field-label" style={{ color: "var(--muted-strong)" }}>
-                Cliente / proyecto
-              </span>
-              <div className="row wrap" style={{ gap: 6 }}>
-                {tags.length === 0 && <span className="hint">Sin etiquetas</span>}
-                {tags.map((t) => (
-                  <TagChip key={t.kind + t.name} tag={t} big onRemove={() => toggleTag(t)} />
-                ))}
-              </div>
-              {unused.length > 0 && (
-                <div className="row wrap" style={{ gap: 6, marginTop: 8 }}>
-                  {unused.map((t) => (
-                    <button key={t.kind + t.name} type="button" className="tag off" onClick={() => toggleTag(t)} title={t.kind === "cliente" ? "Cliente" : "Proyecto"}>
-                      + {t.name}
-                    </button>
-                  ))}
-                </div>
-              )}
-              <form onSubmit={addTag} className="row" style={{ gap: 6, marginTop: 8 }}>
-                <label htmlFor="nueva-etiqueta" className="sr-only">
-                  Nuevo cliente o proyecto
-                </label>
-                <input id="nueva-etiqueta" className="input" style={{ background: "#fff", height: 36 }} placeholder="Nuevo cliente o proyecto" value={newTag} onChange={(e) => setNewTag(e.target.value)} />
-                <label htmlFor="tipo-etiqueta" className="sr-only">
-                  Tipo
-                </label>
-                <select id="tipo-etiqueta" className="select" style={{ width: 112, height: 36, background: "#fff" }} value={newKind} onChange={(e) => setNewKind(e.target.value as TagKind)}>
-                  <option value="cliente">Cliente</option>
-                  <option value="proyecto">Proyecto</option>
-                </select>
-                <button type="submit" className="btn btn-soft" style={{ minHeight: 36 }} disabled={!newTag.trim()}>
-                  Añadir
-                </button>
-              </form>
+              <ClientPicker
+                entities={snap.entities}
+                tasks={snap.tasks}
+                value={cp}
+                onChange={(v) => {
+                  touched.current = true;
+                  setCp(v);
+                }}
+              />
               <span className="hint" style={{ display: "block", marginTop: 6 }}>
-                Si no existe, Lumi crea su nota en 05-Clientes o 04-Proyectos.
+                {snap.catalog.clients
+                  ? `${snap.catalog.clients} clientes y ${snap.catalog.projects} proyectos conocidos.`
+                  : "Aún no tengo clientes: escribe uno nuevo o dime en Ajustes dónde están tus carpetas."}
               </span>
             </div>
           )}
