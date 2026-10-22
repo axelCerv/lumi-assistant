@@ -120,6 +120,7 @@ export class Brain {
   private catalogTimer: NodeJS.Timeout | null = null;
   private catalogSoon = debounce(() => void this.rescanCatalog(), 1500);
   private closed = false;
+  private noteWrite: Promise<void> = Promise.resolve();
 
   constructor(
     root: string,
@@ -223,7 +224,13 @@ export class Brain {
   }
 
   /** La lista en 90-Lumi para que la búsqueda y la IA también la tengan. Solo se escribe si cambió. */
-  private async writeCatalogNote(): Promise<void> {
+  private writeCatalogNote(): Promise<void> {
+    // En fila: dos escrituras a la vez podrían pisarse, y al cerrar se espera a la última
+    this.noteWrite = this.noteWrite.then(() => this.doWriteCatalogNote());
+    return this.noteWrite;
+  }
+
+  private async doWriteCatalogNote(): Promise<void> {
     if (this.closed) return;
     try {
       const ents = this.entities().filter((e) => e.kind !== "persona");
@@ -232,8 +239,9 @@ export class Brain {
       const cur = await this.vault.read(CATALOG_NOTE);
       if (cur && cur.body.trim() === body.trim()) return;
       if (cur && !this.vault.isLumiOwned(cur.fm)) return;
+      if (this.closed) return;
       await this.vault.writeLumi(CATALOG_NOTE, { type: "catalogo" }, body);
-      await this.indexer.indexFile(CATALOG_NOTE);
+      if (!this.closed) await this.indexer.indexFile(CATALOG_NOTE);
     } catch (e) {
       log.warn("catálogo (nota):", errorText(e));
     }
@@ -294,8 +302,11 @@ export class Brain {
   }
 
   async close(): Promise<void> {
-    this.closed = true;
     if (this.catalogTimer) clearInterval(this.catalogTimer);
+    // Que termine lo que estaba leyendo/escribiendo antes de cerrar el índice
+    await this.catalogScan?.catch(() => {});
+    await this.noteWrite.catch(() => {});
+    this.closed = true;
     await this.watcher?.close();
     this.idx.db.close();
   }

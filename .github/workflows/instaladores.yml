@@ -1,11 +1,8 @@
 # Genera los instaladores de Lumi: .dmg para Mac (Apple Silicon e Intel) y .exe para Windows.
 #
-# Muévelo a .github/workflows/instaladores.yml antes de subir el repositorio:
-#   mkdir -p .github/workflows && mv ci/instaladores.yml .github/workflows/
-#
 # - Manual: GitHub → Actions → "Instaladores" → Run workflow. Descarga los
 #   instaladores desde "Artifacts" al terminar.
-# - Con versión: sube una etiqueta (git tag v0.2.0 && git push --tags) y se crea
+# - Con versión: sube una etiqueta (git tag v0.3.1 && git push --tags) y se crea
 #   un Release en borrador con los instaladores; la app se actualiza sola desde ahí.
 #
 # Secretos opcionales (Settings → Secrets → Actions):
@@ -34,6 +31,10 @@ jobs:
             name: windows
             args: --win
     runs-on: ${{ matrix.os }}
+    # Los comandos usan bash también en Windows (PowerShell no entiende «rm -f» ni «&&»)
+    defaults:
+      run:
+        shell: bash
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       MAIN_VITE_GOOGLE_CLIENT_ID: ${{ secrets.MAIN_VITE_GOOGLE_CLIENT_ID }}
